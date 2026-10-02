@@ -419,6 +419,33 @@ and follow `PermissionsManager`'s shape — a block observer on `.main` wrapped 
 `MainActor.assumeIsolated`, with no `deinit`, which on a controller that lives for the process
 would only be a Swift 6 warning for code that never runs.
 
+**`.canJoinAllSpaces` can stop being true while the pill is hidden, and nothing says so.** The
+window server listed the pill on one desktop only, while the window still carried the flag and
+AppKit still reported it. Every later `orderFrontRegardless` put it up on that desktop — the
+window server logged it as `hidden`, never `visible` — so on every other desktop dictation worked
+with no pill and no error, until the app was restarted. What strands the window is not known; the
+Mac had slept and woken in the half hour before, which is a suspect and no more. Setting
+`collectionBehavior` again does not repair it, the same value or cleared and set; only a new window
+does. `PillWindowController.panelOnThisDesktop` asks `isOnActiveSpace` (about 2 µs) on every show
+and replaces the panel when it is false. Building a new panel every time instead costs 10–25 ms
+inside the event tap callback.
+
+Checking that the window is *on screen* straight after `orderFrontRegardless` does not work as a
+safety net: in 50 of 50 runs the window was not yet in `CGWindowListCopyWindowInfo`'s on-screen
+list, so the check would rebuild the panel every time. Not measured: a full-screen app's Space, and
+"Displays have separate Spaces" with two displays. If `isOnActiveSpace` is false for a healthy
+window there, the log line `Pill window was left on another desktop` appears on every dictation.
+
+**A new dictation cannot start while the last is still being processed.** `isRecording` goes false
+when recording stops, so without a guard another dictation could begin during transcription or
+cleanup — ten seconds when the on-device model times out. Both then shared one `TextInjector`: the
+old one pasted into whichever app the new one had captured, and when it finished it turned the new
+pill into a tick and hid it 0.7 s later, in the middle of the recording. `beginRecording` now
+ignores the hotkey while `phase` is `.transcribing` or `.formatting`, and the pill saying
+"Transcribing" or "Cleaning up" is the explanation. That is safe only while every step after
+recording is bounded and every failure puts the phase back through `notify`; a new `await` in
+`transcribeAndInject` that can wait forever would leave the hotkey dead.
+
 **A window sized to its content view does not resize when the content does.** The pill's phases
 are different widths — "Cleaning up" is wider than five audio bars — so setting `PillModel.phase`
 directly leaves the panel at the previous width and the longer label is truncated and off centre.
@@ -606,7 +633,7 @@ anything depending on `mlx-swift` 0.31.5+ needs Xcode's separately-downloaded Me
 
 ## Testing
 
-Swift Testing, not XCTest. 199 tests, no network, no API key, no microphone, no permissions.
+Swift Testing, not XCTest. 206 tests, no network, no API key, no microphone, no permissions.
 
 - Cloud providers are tested against `StubHTTPClient` with recorded response shapes.
 - Every screen is built and laid out in `ViewRenderingTests` — a view that crashes on
