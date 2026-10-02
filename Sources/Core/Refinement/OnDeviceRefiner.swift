@@ -97,16 +97,9 @@ final class OnDeviceRefiner {
                 let session = LanguageModelSession(instructions: instructions)
                 // Greedy sampling: the same sentence must clean up the same way twice. A model
                 // that paraphrases differently on each press is unusable for dictation.
-                //
-                // The macOS 27 SDK renamed this initialiser and back-deployed the new name to 26,
-                // so it needs no runtime check. It does need the compiler gate: the 26 SDK, which
-                // CI builds against, has no `samplingMode` at all, and the 27 SDK warns on the old
-                // name. Swift 6.4 is the compiler that ships with the 27 SDK.
-                #if compiler(>=6.4)
+                // `samplingMode:` arrived in the macOS 27 SDK but is back-deployed to 26, so the
+                // `#available` above already covers it.
                 let options = GenerationOptions(samplingMode: .greedy, temperature: 0)
-                #else
-                let options = GenerationOptions(sampling: .greedy, temperature: 0)
-                #endif
                 let prompt = Self.prompt(for: text, context: context, placeClipboard: placeClipboard)
                 return try await session.respond(to: prompt, options: options).content
             }

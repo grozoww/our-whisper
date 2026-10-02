@@ -9,7 +9,8 @@ cd my-whisper
 ./scripts/run.sh          # build and launch
 ```
 
-Requires macOS 15+, Xcode 26+ (for the toolchain, not necessarily the editor), Apple Silicon.
+Requires Xcode 27+ (for the toolchain, not necessarily the editor), which itself needs macOS
+26.6+, and Apple Silicon. The app it builds runs on macOS 15+.
 Swift package dependencies resolve on the first build.
 
 It is a menu bar app. After launching, look for the microphone icon in the menu bar — there is
