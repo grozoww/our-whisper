@@ -158,6 +158,24 @@ final class DictationController {
 
     private func beginRecording() {
         guard !isRecording else { return }
+
+        // The last dictation is still being turned into text, and the pill is saying so. A second
+        // one cannot start under it: both share one `TextInjector`, so the old one pasted into
+        // whatever app the new one had captured, and when it finished it replaced the new pill
+        // with a tick and hid it 0.7 s later, in the middle of the recording. `isRecording` is no
+        // help — it goes false the moment recording stops.
+        //
+        // Nothing here can leave the hotkey dead: every step after recording is bounded (the
+        // model has its own timeout, the cloud engine has one, the paste takes milliseconds) and
+        // every failure goes through `notify`, which puts the phase back.
+        switch phase {
+        case .transcribing, .formatting:
+            log.info("Hotkey ignored: the last dictation is still being processed")
+            return
+        default:
+            break
+        }
+
         if case .preparingModel = phase {
             notify("Speech model is still downloading")
             return

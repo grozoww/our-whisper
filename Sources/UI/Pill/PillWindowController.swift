@@ -1,4 +1,5 @@
 import AppKit
+import OSLog
 import SwiftUI
 
 /// Owns the floating recording overlay.
@@ -20,6 +21,11 @@ final class PillWindowController {
     private var displayID: CGDirectDisplayID?
 
     private var screenObserver: NSObjectProtocol?
+
+    /// The timer started by `dismiss(after:)`, kept so the next `show()` can call it off.
+    private var dismissal: Task<Void, Never>?
+
+    private let log = Logger(subsystem: "com.grozoww.ourwhisper", category: "pill")
 
     var pillModel: PillModel { model }
 
@@ -51,9 +57,12 @@ final class PillWindowController {
     /// it. Nil falls back to the pointer, which is all an error pill raised before there is a
     /// target has to go on.
     func show(focusedIn processIdentifier: pid_t? = nil) {
+        // A dismissal still pending from the last dictation would otherwise hide this one: start
+        // talking within 0.7 s of a paste, or 2.5 s of "Nothing was said", and the pill vanished
+        // for the whole of the new dictation.
+        dismissal?.cancel()
         model.reset()
-        let panel = panel ?? makePanel()
-        self.panel = panel
+        let panel = panelOnThisDesktop()
         // Chosen once, here, rather than on every re-fit: the pill belongs on the screen the user
         // started dictating on, and re-reading it would make it hop displays mid-sentence.
         displayID = Self.identifier(of: Self.screen(showing: processIdentifier))
@@ -81,11 +90,46 @@ final class PillWindowController {
     }
 
     /// Leaves the pill up briefly so the user sees the result, then dismisses it.
-    func dismiss(after delay: Duration) {
-        Task { [weak self] in
+    ///
+    /// Returns the timer so a test can wait for it to finish. Waiting a fixed time instead failed
+    /// one run in four: a 20 ms timer took up to 465 ms to fire while other suites held the main
+    /// thread.
+    @discardableResult
+    func dismiss(after delay: Duration) -> Task<Void, Never> {
+        dismissal?.cancel()
+        let task = Task { [weak self] in
             try? await Task.sleep(for: delay)
+            // `try?` swallows the cancellation along with everything else, so it has to be asked.
+            guard !Task.isCancelled else { return }
             self?.hide()
         }
+        dismissal = task
+        return task
+    }
+
+    /// The panel, or a new one if macOS has taken the old one off this desktop.
+    ///
+    /// `.canJoinAllSpaces` is not something AppKit keeps true; the window server can stop honouring
+    /// it on a window that is hidden. Measured on a pill that had stopped appearing: the window
+    /// still carried the flag, AppKit still reported it, and the window server listed it on one
+    /// desktop only. `orderFrontRegardless` then put it up on that desktop, and every dictation
+    /// anywhere else ran with no pill and no error. Setting `collectionBehavior` again does not
+    /// bring it back, the same value or cleared and set; only a new window does.
+    ///
+    /// What strands it is not established. The Mac had slept and woken in the half hour before,
+    /// which makes that a suspect and nothing more — the check does not depend on the cause.
+    ///
+    /// Checked here rather than rebuilt every time because this runs inside the event tap
+    /// callback: `isOnActiveSpace` is a couple of microseconds, and a new panel is 10–25 ms.
+    private func panelOnThisDesktop() -> PillPanel {
+        if let panel, panel.isOnActiveSpace { return panel }
+        if let stranded = panel {
+            log.notice("Pill window was left on another desktop; replacing it")
+            stranded.orderOut(nil)
+        }
+        let fresh = makePanel()
+        panel = fresh
+        return fresh
     }
 
     private func makePanel() -> PillPanel {
