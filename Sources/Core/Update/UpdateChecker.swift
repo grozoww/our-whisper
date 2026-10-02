@@ -56,7 +56,7 @@ final class UpdateChecker {
     ///
     /// No query string, so the request stays something anyone can verify says nothing about them —
     /// see `sendsNothingIdentifying`. GitHub's default page of 30 is far more than enough.
-    private static let endpoint = URL(string: "https://api.github.com/repos/grozoww/my-whisper/releases")!
+    private static let endpoint = URL(string: "https://api.github.com/repos/grozoww/our-whisper/releases")!
 
     private let log = Logger(subsystem: "com.grozoww.ourwhisper", category: "update")
     private let http: any HTTPClient

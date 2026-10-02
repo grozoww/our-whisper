@@ -87,7 +87,7 @@ struct ViewRenderingTests {
         version: "9.9.9",
         title: "Nine",
         notes: "",
-        url: URL(string: "https://github.com/grozoww/my-whisper/releases/tag/v9.9.9")!,
+        url: URL(string: "https://github.com/grozoww/our-whisper/releases/tag/v9.9.9")!,
         publishedAt: nil,
         dmg: UpdateChecker.Asset(
             name: "OurWhisper-9.9.9-unnotarized.dmg",

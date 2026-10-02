@@ -50,7 +50,7 @@ struct UpdateCheckerTests {
             "tag_name": "v0.2.0",
             "name": "Modes and history",
             "body": "Notes",
-            "html_url": "https://github.com/grozoww/my-whisper/releases/tag/v0.2.0",
+            "html_url": "https://github.com/grozoww/our-whisper/releases/tag/v0.2.0",
             "published_at": "2026-01-15T10:00:00Z",
             "draft": false,
             "prerelease": false,
@@ -275,7 +275,7 @@ struct UpdateCheckerTests {
             "name": name,
             "state": state,
             "size": size,
-            "browser_download_url": "https://github.com/grozoww/my-whisper/releases/download/release-1.0.15-68c910d/\(name)",
+            "browser_download_url": "https://github.com/grozoww/our-whisper/releases/download/release-1.0.15-68c910d/\(name)",
         ]
     }
 

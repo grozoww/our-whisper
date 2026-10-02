@@ -172,14 +172,14 @@ struct UpdateInstallerTests {
             version: "9.9.9",
             title: "Nine",
             notes: "",
-            url: URL(string: "https://github.com/grozoww/my-whisper/releases/tag/v9.9.9")!,
+            url: URL(string: "https://github.com/grozoww/our-whisper/releases/tag/v9.9.9")!,
             publishedAt: nil,
             dmg: UpdateChecker.Asset(
                 name: dmgName,
-                url: URL(string: "https://github.com/grozoww/my-whisper/releases/download/v9.9.9/\(dmgName)")!,
+                url: URL(string: "https://github.com/grozoww/our-whisper/releases/download/v9.9.9/\(dmgName)")!,
                 size: dmgSize ?? Int64(Self.body.utf8.count)
             ),
-            checksums: URL(string: "https://github.com/grozoww/my-whisper/releases/download/v9.9.9/SHA256SUMS")!
+            checksums: URL(string: "https://github.com/grozoww/our-whisper/releases/download/v9.9.9/SHA256SUMS")!
         )
     }
 

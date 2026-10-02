@@ -214,7 +214,7 @@ NOTE
 ## Installing
 
 \`\`\`bash
-curl -fsSL https://raw.githubusercontent.com/grozoww/my-whisper/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/grozoww/our-whisper/main/scripts/install.sh | bash
 \`\`\`
 
 That downloads this DMG, copies OurWhisper to Applications, and clears the download quarantine

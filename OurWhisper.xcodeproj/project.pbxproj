@@ -279,7 +279,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = OurWhisper;
 				INFOPLIST_KEY_LSUIElement = YES;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "MIT licensed. github.com/grozoww/my-whisper";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "MIT licensed. github.com/grozoww/our-whisper";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "OurWhisper listens to your microphone only while you hold the dictation hotkey, and transcribes it on this Mac.";
 				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.grozoww.ourwhisper;
@@ -303,7 +303,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = OurWhisper;
 				INFOPLIST_KEY_LSUIElement = YES;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "MIT licensed. github.com/grozoww/my-whisper";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "MIT licensed. github.com/grozoww/our-whisper";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "OurWhisper listens to your microphone only while you hold the dictation hotkey, and transcribes it on this Mac.";
 				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.grozoww.ourwhisper;
