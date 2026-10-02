@@ -227,6 +227,22 @@ app" demotes its real refusal to `.unknown`, and the restore then wipes out a di
 swallowed. A `false` must still never *stop* the ⌘V — browsers hand out one `AXWebArea` for a
 whole page rather than an element per input, which is also why `AXWebArea` is in `textRoles`.
 
+**The frontmost app is not always the app with the keyboard.** A non-activating window takes
+keyboard focus without making its app frontmost — Warp's hotkey window is the one users hit — so
+`NSWorkspace.frontmostApplication` goes on naming whatever was underneath, while Accessibility's
+focused application names Warp. Every dictation into Warp used to be aimed, mode-matched and
+recorded as the app below. `captureTarget` takes the workspace's answer, which is free, and asks
+Accessibility on another thread; `confirmTarget` swaps the target when a *regular* app holds the
+keyboard instead — regular for the same reason as `belongs`, since an Open panel answers from a
+service with no app of its own.
+
+Fixing the target alone does not fix the paste. Measured with two stand-in apps: ⌘V posted at
+`.cgAnnotatedSessionEventTap` lands in the *frontmost* app, not in the window holding the
+keyboard; posted to the target's pid it lands in the window. So the paste goes to the pid only when
+the target is not frontmost, and every ordinary dictation keeps the tap it always used. And the
+"user switched apps, re-activate the target" step must not fire here: Warp hides that window the
+moment it loses focus. It asks Accessibility before activating anything.
+
 **A transcript left on the clipboard is not something the user copied.** One `.clipboardOnly`
 outcome used to be permanent: the dictated text stayed on the pasteboard, and every dictation
 after it snapshotted that text as "the user's clipboard" and faithfully restored it, so a single

@@ -95,3 +95,40 @@ struct TextInjectorAcceptanceTests {
         #expect(verdict == .unknown)
     }
 }
+
+/// Which app a dictation is for, when the workspace and Accessibility disagree about it.
+///
+/// They disagree about a non-activating window. Warp's hotkey window takes the keyboard without
+/// making Warp frontmost, so the workspace goes on naming the app underneath, and every dictation
+/// into Warp used to be pasted, recorded and mode-matched as that app.
+@Suite("Who has the keyboard")
+struct KeyboardOwnerTests {
+    @Test("A regular app holding the keyboard wins over the frontmost one")
+    func aNonActivatingWindowWins() {
+        // Measured on macOS 26 with Warp's hotkey window open: workspace says the previous app,
+        // Accessibility says Warp's text area.
+        #expect(TextInjector.keyboardOwner(frontmost: 100, focused: 500, focusedPolicy: .regular) == 500)
+    }
+
+    @Test("Services with no app of their own speak for the frontmost app")
+    func servicesDoNotTakeOver() {
+        // An Open panel answers from openAndSavePanelService, web content from WebContent. Swapping
+        // the target for one of those would aim the paste, the mode and History at a process the
+        // user has never heard of.
+        #expect(TextInjector.keyboardOwner(frontmost: 100, focused: 500, focusedPolicy: .prohibited) == 100)
+        #expect(TextInjector.keyboardOwner(frontmost: 100, focused: 500, focusedPolicy: .accessory) == 100)
+        #expect(TextInjector.keyboardOwner(frontmost: 100, focused: 500, focusedPolicy: nil) == 100)
+    }
+
+    @Test("A question Accessibility could not answer changes nothing")
+    func aFailedQuestionKeepsTheFrontmostApp() {
+        #expect(TextInjector.keyboardOwner(frontmost: 100, focused: nil, focusedPolicy: nil) == 100)
+        #expect(TextInjector.keyboardOwner(frontmost: 100, focused: 100, focusedPolicy: .regular) == 100)
+    }
+
+    @Test("With nothing frontmost, the app holding the keyboard is still a target")
+    func noFrontmostApp() {
+        #expect(TextInjector.keyboardOwner(frontmost: nil, focused: 500, focusedPolicy: .regular) == 500)
+        #expect(TextInjector.keyboardOwner(frontmost: nil, focused: nil, focusedPolicy: nil) == nil)
+    }
+}
