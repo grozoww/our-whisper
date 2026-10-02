@@ -502,6 +502,13 @@ key equivalents (⌘W, ⌘Q, ⌘V in a text field all work — verified) without
 to be told to activate. What it does *not* get is the menu bar at the top of the screen, which
 keeps showing whichever regular app was in front. That is the whole cost of the toggle being off.
 
+**A window belongs to the desktop it was created on.** The scene's window is created at launch, so
+it lived on whichever desktop the app started on, and opening it from the menu bar on any other
+desktop slid the user back there — activating an app switches to the desktop holding its windows.
+`WindowPresenter.followsToCurrentDesktop` sets `.moveToActiveSpace` *before* `NSApp.activate`,
+because activation is the moment the switch happens. The pill never had this problem:
+`.canJoinAllSpaces` puts it on every desktop, which was measured rather than assumed.
+
 **Launch at login is not a setting.** `LaunchAtLogin` reads `SMAppService.mainApp.status` every
 time. Persisting it in `Settings` would create a second source of truth that drifts the moment
 someone switches the login item off in System Settings, and the toggle would then lie about what
