@@ -19,7 +19,9 @@ permissions:
 jobs:
   build:
     name: Build and test
-    runs-on: macos-latest
+    # Not macos-latest: that still means Xcode 26, and the code needs the macOS 27 SDK. The
+    # release job uses the same image, so what CI tests is what ships.
+    runs-on: xcode-27
     if: github.event_name != 'schedule'
 
     steps:
@@ -83,7 +85,7 @@ jobs:
 
   audit:
     name: Dependency audit
-    runs-on: macos-latest
+    runs-on: xcode-27
 
     steps:
       - uses: actions/checkout@v7

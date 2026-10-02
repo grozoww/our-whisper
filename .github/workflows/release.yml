@@ -34,7 +34,8 @@ permissions:
 jobs:
   release:
     name: Package and publish
-    runs-on: macos-latest
+    # The same image CI builds and tests on — see ci.yml.
+    runs-on: xcode-27
     if: github.repository == 'grozoww/our-whisper'
 
     steps:

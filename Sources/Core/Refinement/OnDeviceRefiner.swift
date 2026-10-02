@@ -97,7 +97,9 @@ final class OnDeviceRefiner {
                 let session = LanguageModelSession(instructions: instructions)
                 // Greedy sampling: the same sentence must clean up the same way twice. A model
                 // that paraphrases differently on each press is unusable for dictation.
-                let options = GenerationOptions(sampling: .greedy, temperature: 0)
+                // `samplingMode:` arrived in the macOS 27 SDK but is back-deployed to 26, so the
+                // `#available` above already covers it.
+                let options = GenerationOptions(samplingMode: .greedy, temperature: 0)
                 let prompt = Self.prompt(for: text, context: context, placeClipboard: placeClipboard)
                 return try await session.respond(to: prompt, options: options).content
             }

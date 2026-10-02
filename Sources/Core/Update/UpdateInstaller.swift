@@ -205,7 +205,9 @@ final class UpdateInstaller {
         phase = .downloading(asset.size > 0 ? 0 : nil)
         log.info("Downloading \(asset.name, privacy: .public) (\(asset.size) bytes)")
         let total = asset.size
-        let response = try await http.download(UpdateChecker.anonymousRequest(asset.url), to: image) { written in
+        // Weak here as well as on the hop: an outer closure that names no capture list holds
+        // `self` strongly for the inner one, and the hop's `weak` would then be weak in name only.
+        let response = try await http.download(UpdateChecker.anonymousRequest(asset.url), to: image) { [weak self] written in
             guard total > 0 else { return }
             Task { @MainActor [weak self] in
                 // Clamped so it only ever goes forwards: each step hops to the main actor to be
