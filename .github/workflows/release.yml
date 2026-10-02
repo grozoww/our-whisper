@@ -35,7 +35,7 @@ jobs:
   release:
     name: Package and publish
     runs-on: macos-latest
-    if: github.repository == 'grozoww/my-whisper'
+    if: github.repository == 'grozoww/our-whisper'
 
     steps:
       # Full history, not the single commit `actions/checkout` clones by default. scripts/version.sh
