@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="#install-it-now"><b>Install</b></a> ·
-  <a href="https://github.com/grozoww/my-whisper/releases">Releases</a> ·
+  <a href="https://github.com/grozoww/our-whisper/releases">Releases</a> ·
   <a href="CONTRIBUTING.md">Build from source</a>
 </p>
 
@@ -26,7 +26,7 @@ turn on the optional cloud provider. There is no account, no telemetry, and no p
 ## Install it now
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/grozoww/my-whisper/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/grozoww/our-whisper/main/scripts/install.sh | bash
 ```
 
 Requires macOS 15 or later on Apple Silicon. What that script does, and how to install by hand
@@ -125,7 +125,7 @@ Online (optional, Soniox): 60+ including Chinese and Japanese. Requires your own
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/grozoww/my-whisper/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/grozoww/our-whisper/main/scripts/install.sh | bash
 ```
 
 That fetches the newest build, copies OurWhisper to Applications and clears the download
@@ -136,7 +136,7 @@ it is just not stamped. [`scripts/install.sh`](scripts/install.sh) is short and 
 so read it before you run it.
 
 Prefer to do it by hand: download the DMG from
-[Releases](https://github.com/grozoww/my-whisper/releases), drag OurWhisper to Applications, then
+[Releases](https://github.com/grozoww/our-whisper/releases), drag OurWhisper to Applications, then
 **right-click it and choose Open**, once. Every release says whether it is notarized. Every push to
 `main` adds a prerelease, so there is always a current build to download and older ones stay where
 they were; tags produce versioned releases.

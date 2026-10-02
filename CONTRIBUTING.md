@@ -3,8 +3,8 @@
 ## Get building
 
 ```bash
-git clone https://github.com/<you>/my-whisper.git
-cd my-whisper
+git clone https://github.com/<you>/our-whisper.git
+cd our-whisper
 ./scripts/dev-cert.sh     # one time — read "The signing trap" below first
 ./scripts/run.sh          # build and launch
 ```

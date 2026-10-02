@@ -2,7 +2,7 @@
 #
 # Installs OurWhisper from the latest GitHub release.
 #
-#   curl -fsSL https://raw.githubusercontent.com/grozoww/my-whisper/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/grozoww/our-whisper/main/scripts/install.sh | bash
 #
 # Options, when running the script from a checkout rather than a pipe:
 #
@@ -29,7 +29,7 @@
 
 set -euo pipefail
 
-REPO="grozoww/my-whisper"
+REPO="grozoww/our-whisper"
 APP_NAME="OurWhisper"
 PREFIX="/Applications"
 VERSION=""
@@ -41,7 +41,7 @@ usage() {
   cat <<'USAGE'
 Installs OurWhisper from the latest GitHub release.
 
-  curl -fsSL https://raw.githubusercontent.com/grozoww/my-whisper/main/scripts/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/grozoww/our-whisper/main/scripts/install.sh | bash
 
 Options (pass them after `bash -s --` when piping):
 

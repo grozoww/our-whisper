@@ -36,7 +36,7 @@ jobs:
     name: Package and publish
     # The same image CI builds and tests on — see ci.yml.
     runs-on: xcode-27
-    if: github.repository == 'grozoww/my-whisper'
+    if: github.repository == 'grozoww/our-whisper'
 
     steps:
       # Full history, not the single commit `actions/checkout` clones by default. scripts/version.sh

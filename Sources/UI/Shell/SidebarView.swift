@@ -51,7 +51,7 @@ private struct SidebarFooter: View {
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
 
-            Link(destination: URL(string: "https://github.com/grozoww/my-whisper")!) {
+            Link(destination: URL(string: "https://github.com/grozoww/our-whisper")!) {
                 Text("OurWhisper")
                     .font(.system(size: 13, weight: .medium))
                     .frame(maxWidth: .infinity)
