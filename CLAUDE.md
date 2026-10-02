@@ -227,6 +227,22 @@ app" demotes its real refusal to `.unknown`, and the restore then wipes out a di
 swallowed. A `false` must still never *stop* the ⌘V — browsers hand out one `AXWebArea` for a
 whole page rather than an element per input, which is also why `AXWebArea` is in `textRoles`.
 
+**The frontmost app is not always the app with the keyboard.** A non-activating window takes
+keyboard focus without making its app frontmost — Warp's hotkey window is the one users hit — so
+`NSWorkspace.frontmostApplication` goes on naming whatever was underneath, while Accessibility's
+focused application names Warp. Every dictation into Warp used to be aimed, mode-matched and
+recorded as the app below. `captureTarget` takes the workspace's answer, which is free, and asks
+Accessibility on another thread; `confirmTarget` swaps the target when a *regular* app holds the
+keyboard instead — regular for the same reason as `belongs`, since an Open panel answers from a
+service with no app of its own.
+
+Fixing the target alone does not fix the paste. Measured with two stand-in apps: ⌘V posted at
+`.cgAnnotatedSessionEventTap` lands in the *frontmost* app, not in the window holding the
+keyboard; posted to the target's pid it lands in the window. So the paste goes to the pid only when
+the target is not frontmost, and every ordinary dictation keeps the tap it always used. And the
+"user switched apps, re-activate the target" step must not fire here: Warp hides that window the
+moment it loses focus. It asks Accessibility before activating anything.
+
 **A transcript left on the clipboard is not something the user copied.** One `.clipboardOnly`
 outcome used to be permanent: the dictated text stayed on the pasteboard, and every dictation
 after it snapshotted that text as "the user's clipboard" and faithfully restored it, so a single
@@ -485,6 +501,13 @@ preference it is. An accessory app can hold a key window, take keyboard input, a
 key equivalents (⌘W, ⌘Q, ⌘V in a text field all work — verified) without a Dock icon; it only has
 to be told to activate. What it does *not* get is the menu bar at the top of the screen, which
 keeps showing whichever regular app was in front. That is the whole cost of the toggle being off.
+
+**A window belongs to the desktop it was created on.** The scene's window is created at launch, so
+it lived on whichever desktop the app started on, and opening it from the menu bar on any other
+desktop slid the user back there — activating an app switches to the desktop holding its windows.
+`WindowPresenter.followsToCurrentDesktop` sets `.moveToActiveSpace` *before* `NSApp.activate`,
+because activation is the moment the switch happens. The pill never had this problem:
+`.canJoinAllSpaces` puts it on every desktop, which was measured rather than assumed.
 
 **Launch at login is not a setting.** `LaunchAtLogin` reads `SMAppService.mainApp.status` every
 time. Persisting it in `Settings` would create a second source of truth that drifts the moment

@@ -102,13 +102,29 @@ enum WindowPresenter {
     /// is. An accessory app can hold a key window and take keyboard input perfectly well; it just
     /// has to be told to activate, which is the line below.
     static func activate() {
+        let window = mainWindow(among: NSApp.windows)
+        // Before activating, because activating is what moves the user. See
+        // `followsToCurrentDesktop`.
+        window.map(followsToCurrentDesktop)
+
         if showsDockIcon { NSApp.setActivationPolicy(.regular) }
         NSApp.activate(ignoringOtherApps: true)
 
         // Ordering the window front explicitly matters on first launch: the scene exists from
         // launch, but an accessory app's window is not in the activation order, so without this
         // the app appears not to have started at all.
-        mainWindow(among: NSApp.windows)?.makeKeyAndOrderFront(nil)
+        window?.makeKeyAndOrderFront(nil)
+    }
+
+    /// Makes the window come to the desktop the user is on, rather than the user go to the window.
+    ///
+    /// An ordinary window belongs to the desktop it was created on, and the scene's window is
+    /// created at launch — so it lived on whichever desktop the app happened to start on, and
+    /// opening it from the menu bar on any other desktop slid the user back there. Measured on
+    /// macOS 26: without this, activating the app and ordering its window front switched desktops
+    /// every time; with it, the window moved instead.
+    static func followsToCurrentDesktop(_ window: NSWindow) {
+        window.collectionBehavior.insert(.moveToActiveSpace)
     }
 
     /// Drop back to accessory once the last window closes, so we leave the Dock and the

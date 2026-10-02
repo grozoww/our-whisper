@@ -30,6 +30,12 @@ final class TextInjector {
         let processIdentifier: pid_t
         let applicationName: String
         let bundleIdentifier: String?
+
+        init(_ app: NSRunningApplication) {
+            processIdentifier = app.processIdentifier
+            applicationName = app.localizedName ?? "the focused app"
+            bundleIdentifier = app.bundleIdentifier
+        }
     }
 
     enum InjectionError: LocalizedError {
@@ -59,22 +65,77 @@ final class TextInjector {
     /// which is the thing `DictationController` drops its own copy to avoid.
     private var ownedChangeCount: Int?
 
+    /// Accessibility's answer to "which app has the keyboard", asked off the main thread the moment
+    /// the hotkey fires and collected by `confirmTarget()`.
+    private var keyboardCheck: Task<pid_t?, Never>?
+
     // MARK: - Capture
 
     /// Called the instant the hotkey fires, before the pill is shown.
+    ///
+    /// The workspace's frontmost app is the answer almost always, and it is free. It is wrong for
+    /// a non-activating window: Warp's hotkey window takes the keyboard without making Warp the
+    /// frontmost app, so the workspace goes on naming whatever was underneath — measured on
+    /// macOS 26, while Accessibility named Warp's text area. Every dictation into it was then
+    /// aimed at the app below. Accessibility is asked as well, but on another thread: this runs
+    /// inside the event tap callback, and a round trip to another process there is what makes
+    /// macOS switch the tap off.
     func captureTarget() {
-        guard let app = NSWorkspace.shared.frontmostApplication else {
-            capturedTarget = nil
-            return
-        }
-
-        capturedTarget = Target(
-            processIdentifier: app.processIdentifier,
-            applicationName: app.localizedName ?? "the focused app",
-            bundleIdentifier: app.bundleIdentifier
-        )
+        capturedTarget = NSWorkspace.shared.frontmostApplication.map(Target.init)
+        keyboardCheck = Task.detached(priority: .userInitiated) { Self.keyboardFocusedApplication() }
 
         log.debug("Captured target: \(self.capturedTarget?.applicationName ?? "none", privacy: .public)")
+    }
+
+    /// Swaps the captured app for the one that really had the keyboard, when the two differ.
+    ///
+    /// Called when the recording ends, by which time the check started in `captureTarget` has long
+    /// since answered — and before anything reads the target to pick a mode or record History.
+    func confirmTarget() async {
+        guard let check = keyboardCheck else { return }
+        keyboardCheck = nil
+        let focused = await check.value
+
+        let owner = Self.keyboardOwner(
+            frontmost: capturedTarget?.processIdentifier,
+            focused: focused,
+            focusedPolicy: focused.flatMap { NSRunningApplication(processIdentifier: $0)?.activationPolicy }
+        )
+        guard let owner, owner != capturedTarget?.processIdentifier,
+              let app = NSRunningApplication(processIdentifier: owner)
+        else { return }
+
+        capturedTarget = Target(app)
+        log.info("The keyboard was in \(self.capturedTarget?.applicationName ?? "?", privacy: .public), not the frontmost app")
+    }
+
+    /// Which app the text is for: the frontmost one, unless Accessibility put the keyboard in a
+    /// different *regular* app.
+    ///
+    /// Regular only, for the reason `belongs(owner:to:ownerPolicy:)` gives: an Open panel, web
+    /// content and the other remote views answer from processes with no app of their own, and
+    /// their answer is about the frontmost app rather than against it. A nil from Accessibility is
+    /// a failed question, not a different answer, so it changes nothing.
+    nonisolated static func keyboardOwner(
+        frontmost: pid_t?,
+        focused: pid_t?,
+        focusedPolicy: NSApplication.ActivationPolicy?
+    ) -> pid_t? {
+        guard let focused, focused != frontmost, focusedPolicy == .regular else { return frontmost }
+        return focused
+    }
+
+    /// The app Accessibility says has keyboard focus, or nil when it could not say.
+    private nonisolated static func keyboardFocusedApplication() -> pid_t? {
+        var application: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            AXUIElementCreateSystemWide(),
+            kAXFocusedApplicationAttribute as CFString,
+            &application
+        ) == .success, let application else { return nil }
+
+        var pid: pid_t = 0
+        return AXUIElementGetPid(application as! AXUIElement, &pid) == .success ? pid : nil
     }
 
     var targetName: String? { capturedTarget?.applicationName }
@@ -107,7 +168,14 @@ final class TextInjector {
 
         // The user may have switched apps while we transcribed. Put their original app back in
         // front, otherwise the text lands somewhere they were not looking.
+        //
+        // Not when the keyboard never left. A non-activating window — Warp's hotkey window — has
+        // it without its app ever being frontmost, so the workspace disagrees with the target on
+        // every dictation into one. Activating the app then is worse than useless: Warp hides that
+        // window the moment it loses focus. Accessibility is only asked when the workspace
+        // disagrees, so an ordinary dictation pays nothing for this.
         if NSWorkspace.shared.frontmostApplication?.processIdentifier != target.processIdentifier,
+           Self.keyboardFocusedApplication() != target.processIdentifier,
            let app = NSRunningApplication(processIdentifier: target.processIdentifier) {
             app.activate()
             try? await Task.sleep(for: .milliseconds(60))
@@ -125,7 +193,12 @@ final class TextInjector {
         let saved = holdsOwnTranscript ? nil : PasteboardSnapshot.capture()
         writeToClipboard(text)
 
-        if postPasteKeystroke() {
+        // Read after any activation above, so this is only true when the keyboard really is in a
+        // window whose app is not frontmost.
+        let keyboardIsInBackgroundApp =
+            NSWorkspace.shared.frontmostApplication?.processIdentifier != target.processIdentifier
+
+        if postPasteKeystroke(directlyTo: keyboardIsInBackgroundApp ? target.processIdentifier : nil) {
             // The keystroke went out regardless — the verdict is not trusted enough to cancel a
             // paste. What changes is that the old clipboard does not come back over the top of
             // text that had nowhere to land.
@@ -163,7 +236,15 @@ final class TextInjector {
     /// `privateState` matters: with the shared session state, the event inherits whatever
     /// modifiers are physically held. During push-to-talk the user is *still holding* the hotkey
     /// modifiers, so the paste would arrive as ⌥⌘⌃⇧V and do nothing.
-    private func postPasteKeystroke() -> Bool {
+    ///
+    /// `pid` is set only when the keyboard is in a non-activating window of an app that is not
+    /// frontmost — Warp's hotkey window. An event posted at the annotated session tap goes to the
+    /// *frontmost app*, not to the window holding the keyboard: measured with two stand-in apps
+    /// on macOS 26, ⌘V posted there landed in the app underneath every time, while the same event
+    /// posted to the panel's pid landed in the panel. That is the other half of "dictating into
+    /// Warp pastes into the app below". Every other dictation keeps the annotated tap it has
+    /// always used.
+    private func postPasteKeystroke(directlyTo pid: pid_t?) -> Bool {
         guard let source = CGEventSource(stateID: .privateState) else { return false }
         source.setLocalEventsFilterDuringSuppressionState(
             [.permitLocalMouseEvents, .permitSystemDefinedEvents],
@@ -177,8 +258,13 @@ final class TextInjector {
 
         keyDown.flags = .maskCommand
         keyUp.flags = .maskCommand
-        keyDown.post(tap: .cgAnnotatedSessionEventTap)
-        keyUp.post(tap: .cgAnnotatedSessionEventTap)
+        if let pid {
+            keyDown.postToPid(pid)
+            keyUp.postToPid(pid)
+        } else {
+            keyDown.post(tap: .cgAnnotatedSessionEventTap)
+            keyUp.post(tap: .cgAnnotatedSessionEventTap)
+        }
         return true
     }
 

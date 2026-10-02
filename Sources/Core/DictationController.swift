@@ -246,6 +246,10 @@ final class DictationController {
 
             log.info("Transcribed \(result.audioDuration, format: .fixed(precision: 1))s in \(result.processingTime, format: .fixed(precision: 2))s (\(result.realtimeFactor, format: .fixed(precision: 0))x realtime)")
 
+            // Before anything reads the target: the mode, the paste and History all need the app
+            // that had the keyboard, which is not always the frontmost one.
+            await injector.confirmTarget()
+
             let mode = modes.resolve(
                 settings: current.refinement,
                 frontmostBundleID: injector.targetBundleID

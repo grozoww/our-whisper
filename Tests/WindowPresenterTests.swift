@@ -59,4 +59,18 @@ struct WindowPresenterTests {
 
         #expect(WindowPresenter.mainWindow(among: [statusItem, dismissedMenu]) == nil)
     }
+
+    @Test("The window comes to the user's desktop instead of taking them to its own")
+    func followsToTheCurrentDesktop() {
+        // The scene's window is created at launch, on whichever desktop the app started on.
+        // Without this, opening it from the menu bar anywhere else slid the user back there.
+        let scene = makeWindow(identifier: WindowID.main)
+        scene.collectionBehavior = [.fullScreenPrimary]
+
+        WindowPresenter.followsToCurrentDesktop(scene)
+
+        #expect(scene.collectionBehavior.contains(.moveToActiveSpace))
+        // Added to, not replaced: full screen has to keep working.
+        #expect(scene.collectionBehavior.contains(.fullScreenPrimary))
+    }
 }
