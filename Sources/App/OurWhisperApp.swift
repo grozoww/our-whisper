@@ -28,7 +28,7 @@ struct OurWhisperApp: App {
             MenuBarContent()
                 .environment(appState)
         } label: {
-            MenuBarLabel(state: appState.recordingState)
+            MenuBarLabel(state: appState.recordingState, updateAvailable: appState.availableUpdate != nil)
         }
     }
 }
@@ -41,15 +41,16 @@ struct OurWhisperApp: App {
 /// resize it, and `.resizable()` here would stretch a template to whatever the bar allowed.
 struct MenuBarLabel: View {
     let state: AppState.RecordingState
+    let updateAvailable: Bool
 
     var body: some View {
         Group {
-            switch state.menuBarGlyph {
+            switch state.menuBarGlyph(updateAvailable: updateAvailable) {
             case .asset(let name): Image(name)
             case .symbol(let name): Image(systemName: name)
             }
         }
-        .accessibilityLabel(state.accessibilityLabel)
+        .accessibilityLabel(state.accessibilityLabel(updateAvailable: updateAvailable))
     }
 }
 

@@ -76,6 +76,23 @@ struct ViewRenderingTests {
         _ = temp
     }
 
+    @Test("The menu's update item builds in every phase it can be in", arguments: [
+        UpdateInstaller.Phase.idle,
+        .downloading(0.42),
+        .downloading(nil),
+        .verifying,
+        .installing,
+        .restarting,
+        .installedNeedsRestart,
+        .failed("The download does not match its published checksum."),
+    ])
+    func rendersUpdateMenuItem(phase: UpdateInstaller.Phase) {
+        let (state, temp) = makeState()
+        render(UpdateMenuItem(release: Self.release, phase: phase, refusal: nil, openHome: {}).environment(state))
+        render(UpdateMenuItem(release: Self.release, phase: phase, refusal: "Ad-hoc signed.", openHome: {}).environment(state))
+        _ = temp
+    }
+
     @Test("The update banner builds against a real AppState")
     func rendersUpdateBanner() {
         let (state, temp) = makeState()

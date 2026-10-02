@@ -36,6 +36,17 @@ struct AppBundleTests {
         #expect(icon.size == CGSize(width: 18, height: 18))
     }
 
+    /// The frog with the download badge is a second image, and fails the same quiet way as the
+    /// first: an unresolved name or a lost template flag, and the one moment the icon is meant to
+    /// catch the eye is the moment it vanishes.
+    @Test("The glyph shown for a waiting update is a template of the same size")
+    func hasUpdateIcon() throws {
+        let icon = try #require(NSImage(named: AppState.MenuBarGlyph.frogWithUpdate))
+        #expect(icon.isTemplate)
+        // Swapped in for the frog, so it must not make the status item grow or shrink.
+        #expect(icon.size == CGSize(width: 18, height: 18))
+    }
+
     @Test("Every login-item state explains itself", arguments: [
         SMAppService.Status.enabled,
         .requiresApproval,

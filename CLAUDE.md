@@ -376,6 +376,21 @@ anything TCC-shaped has to run inside a real `.app` launched through LaunchServi
 what `OURWHISPER_SELFTEST_UPDATE=1` is for, and what the throwaway `MountProbe.app` that found
 this did.
 
+**A waiting update shows in the menu bar twice, and both read `AppState.availableUpdate`.** The idle
+frog becomes `MenuBarUpdateIcon` — the same frog with a download badge, drawn by
+`scripts/make-icon.swift` beside `MenuBarIcon` — and the menu gets `UpdateMenuItem` at the top. It is
+a second image because a status item is one template and a badge cannot be laid over it at runtime;
+the badge has a ring of nothing cut round it, because one colour has nothing else to separate a
+disc from a face. It replaces only the *idle* glyph — listening and working still win.
+`UpdateMenuItem.row` is pure and covers every installer phase.
+
+Two traps in it. A menu draws a line under the title only when the button's label is a flat
+`Image` + `Text` + `Text`; the same two `Text`s inside a `Label` lose the second one with no
+warning (measured on macOS 26). And `installer.refusal` is a security-daemon round trip the first
+time it is read, which the menu would otherwise pay inside its body — so `AppState.checkForUpdate`
+reads it once, right after a check finds a release. Use that method, not `updates.check`, from
+anywhere a user can start a check.
+
 **Padding a `Section` pads every row in it.** In a `List`, `Section { rows }.padding(.top, 10)`
 does not put 10pt above the group — it puts 10pt above each row inside it, so the rows come out
 taller than the rows in the group above and their selection highlights come out taller with them.
