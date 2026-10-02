@@ -389,10 +389,7 @@ private struct UpdatesSection: View {
                     detail: "Version \(UpdateChecker.currentVersion)"
                 ) {
                     Button("Check") {
-                        Task {
-                            await appState.updates.check(force: true)
-                            appState.settings.settings.updates.lastCheck = Date()
-                        }
+                        Task { await appState.checkForUpdate(force: true) }
                     }
                     .buttonStyle(.bordered)
                     .disabled(appState.updates.state == .checking)

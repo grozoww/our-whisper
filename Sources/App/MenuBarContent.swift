@@ -11,6 +11,16 @@ struct MenuBarContent: View {
                 Divider()
             }
 
+            if let release = appState.availableUpdate {
+                UpdateMenuItem(
+                    release: release,
+                    phase: appState.installer.phase,
+                    refusal: appState.installer.refusal,
+                    openHome: { showWindow(.home) }
+                )
+                Divider()
+            }
+
             Text(statusLine)
 
             Divider()

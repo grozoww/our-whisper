@@ -14,9 +14,11 @@ final class AppState {
         case formatting
         case failed(String)
 
-        var menuBarGlyph: MenuBarGlyph {
+        /// A waiting update only replaces the *idle* glyph. Once the app is listening or working,
+        /// that is what the user needs to see, and an update will still be there afterwards.
+        func menuBarGlyph(updateAvailable: Bool) -> MenuBarGlyph {
             switch self {
-            case .idle: .asset(MenuBarGlyph.frog)
+            case .idle: .asset(updateAvailable ? MenuBarGlyph.frogWithUpdate : MenuBarGlyph.frog)
             case .listening: .symbol("mic.fill")
             case .transcribing: .symbol("waveform")
             case .formatting: .symbol("sparkles")
@@ -24,9 +26,9 @@ final class AppState {
             }
         }
 
-        var accessibilityLabel: String {
+        func accessibilityLabel(updateAvailable: Bool) -> String {
             switch self {
-            case .idle: "OurWhisper, idle"
+            case .idle: updateAvailable ? "OurWhisper, update available" : "OurWhisper, idle"
             case .listening: "OurWhisper, listening"
             case .transcribing: "OurWhisper, transcribing"
             case .formatting: "OurWhisper, formatting"
@@ -44,6 +46,13 @@ final class AppState {
         /// image. A name that does not resolve draws nothing whatsoever — no placeholder, no
         /// warning, just a gap in the menu bar — which is what `AppBundleTests` guards.
         static let frog = "MenuBarIcon"
+
+        /// The frog with a download badge on its chin, drawn by the same script as the frog and
+        /// shown in its place while an update is waiting. A second image rather than a badge laid
+        /// over the first, because a status item is one template and there is nothing at runtime
+        /// to composite onto; and drawn rather than borrowed from SF Symbols so it is still our
+        /// frog, which a stock "update" symbol would stop being.
+        static let frogWithUpdate = "MenuBarUpdateIcon"
 
         case asset(String)
         case symbol(String)
@@ -74,6 +83,12 @@ final class AppState {
         case .formatting: .formatting
         case .failed(let message): .failed(message)
         }
+    }
+
+    /// The release waiting to be installed, if the last check found one. What the menu bar glyph
+    /// and the menu's update item both key on, so they cannot disagree.
+    var availableUpdate: UpdateChecker.Release? {
+        if case .available(let release) = updates.state { release } else { nil }
     }
 
     /// Name of the input device shown in the toolbar.
@@ -156,14 +171,27 @@ final class AppState {
         }
 
         if settings.settings.updates.checkAutomatically {
-            await updates.check(skippedVersion: settings.settings.updates.skippedVersion)
-            settings.settings.updates.lastCheck = Date()
+            await checkForUpdate()
         }
 
         // Only a human sets this, and only to find out whether the updater works on this Mac.
         if SelfTest.installsUpdate {
             await SelfTest.installUpdate(found: updates, with: installer)
         }
+    }
+
+    /// Asks GitHub for the newest release, and — when there is one — works out whether this build
+    /// can install it.
+    ///
+    /// The second half is why this is not just `updates.check`. The menu bar's update item needs
+    /// `installer.refusal`, which is a round trip to the security daemon the first time it is
+    /// asked, and nothing in a SwiftUI body may ask the system a question. The menu can be opened
+    /// from any desktop before either window has been, so there is no screen's `.task` to count on:
+    /// the answer is read here, once, and the item reads the cached value.
+    func checkForUpdate(force: Bool = false) async {
+        await updates.check(skippedVersion: settings.settings.updates.skippedVersion, force: force)
+        settings.settings.updates.lastCheck = Date()
+        if availableUpdate != nil { _ = installer.refusal }
     }
 
     static var isRunningTests: Bool { AppDirectories.isRunningTests }

@@ -480,7 +480,7 @@ private let menuBarSmallGlyph = Glyph(
 /// Black on nothing. A template's colour is never used, but the alpha is, so anti-aliased edges
 /// have to come from the shape rather than from a grey fill — and the features are holes in the
 /// alpha, cut with the `.clear` blend mode, not lighter ink.
-private func drawMenuBarGlyph(in context: CGContext, size: CGFloat) {
+private func drawMenuBarGlyph(in context: CGContext, size: CGFloat, downloadBadge: Bool = false) {
     let glyph = size <= 18 ? menuBarSmallGlyph : menuBarGlyph
     let box = glyph.silhouette.bounds
 
@@ -540,6 +540,54 @@ private func drawMenuBarGlyph(in context: CGContext, size: CGFloat) {
             context.fillPath()
         }
     }
+
+    if downloadBadge { drawDownloadBadge(in: context, size: size) }
+}
+
+/// A disc with a downward arrow cut out of it, in the bottom right corner, and a ring of nothing
+/// round the disc so it reads as sitting *on* the frog rather than being fused to it.
+///
+/// Laid out on the 18-point grid and scaled, so the one drawing serves both pixel sizes. The ring
+/// is what keeps the badge legible: a template has one colour, and a solid disc touching a solid
+/// face is a lump. It is cut with `.clear` for the same reason the frog's features are — the alpha
+/// is the only thing a template has.
+///
+/// This is the same idea as the screen-with-an-arrow macOS shows for a pending software update,
+/// which is where the request for it came from, drawn on our own frog rather than borrowed from a
+/// stock symbol that could belong to any app.
+private func drawDownloadBadge(in context: CGContext, size: CGFloat) {
+    let unit = size / 18
+    let centre = CGPoint(x: 13.2 * unit, y: 13.2 * unit)
+    let radius = 4.6 * unit
+    let ring = 1.1 * unit
+
+    context.setBlendMode(.clear)
+    context.addEllipse(in: CGRect(
+        x: centre.x - radius - ring, y: centre.y - radius - ring,
+        width: (radius + ring) * 2, height: (radius + ring) * 2
+    ))
+    context.fillPath()
+
+    context.setBlendMode(.normal)
+    context.addEllipse(in: CGRect(
+        x: centre.x - radius, y: centre.y - radius, width: radius * 2, height: radius * 2
+    ))
+    context.fillPath()
+
+    // The arrow: a stem and a chevron, one stroke each, round capped. Drawn as holes.
+    let reach = radius * 0.5
+    let arrow = CGMutablePath()
+    arrow.move(to: CGPoint(x: centre.x, y: centre.y - reach))
+    arrow.addLine(to: CGPoint(x: centre.x, y: centre.y + reach))
+    arrow.move(to: CGPoint(x: centre.x - reach * 0.8, y: centre.y + reach * 0.05))
+    arrow.addLine(to: CGPoint(x: centre.x, y: centre.y + reach))
+    arrow.addLine(to: CGPoint(x: centre.x + reach * 0.8, y: centre.y + reach * 0.05))
+
+    context.setBlendMode(.clear)
+    context.addPath(arrow)
+    context.setLineWidth(max(1, 1.15 * unit))
+    context.strokePath()
+    context.setBlendMode(.normal)
 }
 
 private func render(pixels: Int) -> CGImage {
@@ -559,7 +607,7 @@ private func render(pixels: Int) -> CGImage {
     return image
 }
 
-private func renderMenuBar(pixels: Int) -> CGImage {
+private func renderMenuBar(pixels: Int, downloadBadge: Bool = false) -> CGImage {
     guard let context = CGContext(
         data: nil,
         width: pixels,
@@ -571,7 +619,7 @@ private func renderMenuBar(pixels: Int) -> CGImage {
     ) else {
         fatalError("could not create a \(pixels)x\(pixels) bitmap context")
     }
-    drawMenuBarGlyph(in: context, size: CGFloat(pixels))
+    drawMenuBarGlyph(in: context, size: CGFloat(pixels), downloadBadge: downloadBadge)
     guard let image = context.makeImage() else { fatalError("could not render the menu bar glyph at \(pixels)") }
     return image
 }
@@ -646,47 +694,57 @@ try! catalogContents.write(
 
 print("✓ Sources/Resources/Assets.xcassets/AppIcon.appiconset")
 
-// MARK: - Menu bar image set
+// MARK: - Menu bar image sets
 
 // 18 points is what a status item is given, and macOS has no 3x display, so this is the whole set.
 // `template-rendering-intent` is the load-bearing line: without it the artwork ships as literal
 // black pixels and vanishes on a dark menu bar.
-private let menuBarSet = root
-    .appendingPathComponent("Sources/Resources/Assets.xcassets/MenuBarIcon.imageset")
-try! FileManager.default.createDirectory(at: menuBarSet, withIntermediateDirectories: true)
+//
+// Two sets, the frog and the frog with a download badge, which the app swaps between when an update
+// is waiting. They are separate images rather than one image and an overlay because a status item
+// is a single template: there is nothing to composite a badge onto at runtime.
+private let menuBarSets: [(name: String, badge: Bool)] = [
+    ("MenuBarIcon", false),
+    ("MenuBarUpdateIcon", true),
+]
 
-var menuBarEntries: [String] = []
-for scale in [1, 2] {
-    let pixels = 18 * scale
-    let name = "menubar_18x18\(scale == 2 ? "@2x" : "").png"
-    writePNG(renderMenuBar(pixels: pixels), to: menuBarSet.appendingPathComponent(name))
-    menuBarEntries.append("""
-        {
-          "filename" : "\(name)",
-          "idiom" : "mac",
-          "scale" : "\(scale)x"
-        }
-    """)
-    print("  \(name)  (\(pixels)px)")
+for set in menuBarSets {
+    let directory = root.appendingPathComponent("Sources/Resources/Assets.xcassets/\(set.name).imageset")
+    try! FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+    var menuBarEntries: [String] = []
+    for scale in [1, 2] {
+        let pixels = 18 * scale
+        let name = "menubar_18x18\(scale == 2 ? "@2x" : "").png"
+        writePNG(renderMenuBar(pixels: pixels, downloadBadge: set.badge), to: directory.appendingPathComponent(name))
+        menuBarEntries.append("""
+            {
+              "filename" : "\(name)",
+              "idiom" : "mac",
+              "scale" : "\(scale)x"
+            }
+        """)
+        print("  \(set.name)/\(name)  (\(pixels)px)")
+    }
+
+    let menuBarContents = """
+    {
+      "images" : [
+    \(menuBarEntries.joined(separator: ",\n"))
+      ],
+      "info" : {
+        "author" : "xcode",
+        "version" : 1
+      },
+      "properties" : {
+        "template-rendering-intent" : "template"
+      }
+    }
+
+    """
+    try! menuBarContents.write(to: directory.appendingPathComponent("Contents.json"), atomically: true, encoding: .utf8)
+    print("✓ Sources/Resources/Assets.xcassets/\(set.name).imageset")
 }
-
-let menuBarContents = """
-{
-  "images" : [
-\(menuBarEntries.joined(separator: ",\n"))
-  ],
-  "info" : {
-    "author" : "xcode",
-    "version" : 1
-  },
-  "properties" : {
-    "template-rendering-intent" : "template"
-  }
-}
-
-"""
-try! menuBarContents.write(to: menuBarSet.appendingPathComponent("Contents.json"), atomically: true, encoding: .utf8)
-print("✓ Sources/Resources/Assets.xcassets/MenuBarIcon.imageset")
 
 // MARK: - README
 
