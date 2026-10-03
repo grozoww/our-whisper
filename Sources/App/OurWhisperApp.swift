@@ -64,6 +64,10 @@ enum WindowID {
 /// briefly become a regular app so the window can come forward and accept input.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if SelfTest.onlyChecksItLaunches {
+            print("OurWhisper launched")
+            exit(0)
+        }
         NSApp.setActivationPolicy(.accessory)
     }
 
@@ -74,7 +78,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Last chance to write coalesced settings, modes, vocabulary and history to disk. Without
     /// this, a change made in the last fraction of a second before quitting is lost.
     func applicationWillTerminate(_ notification: Notification) {
-        MainActor.assumeIsolated { AppStateHolder.shared?.flushToDisk() }
+        MainActor.assumeIsolated {
+            AppStateHolder.shared?.flushToDisk()
+            // Before `exit`, or llama.cpp's Metal backend asserts in a static destructor and every
+            // quit with the cleanup model loaded ends in a crash report.
+            AppStateHolder.shared?.onDeviceRefiner.shutdown()
+        }
     }
 }
 

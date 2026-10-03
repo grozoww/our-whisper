@@ -13,13 +13,25 @@ protocol TranscriptionProvider: Actor {
 
     /// Downloads and loads whatever the engine needs. Safe to call repeatedly; later calls with
     /// models already loaded return immediately.
-    func prepare(progress: (@Sendable (Double) -> Void)?) async throws
+    func prepare(progress: (@Sendable (SpeechModelProgress) -> Void)?) async throws
 
     /// Transcribes one complete utterance of 16 kHz mono float samples.
     func transcribe(samples: [Float], language: SpeechLanguage) async throws -> Transcription
 
     /// Frees model memory. Called when the user switches engines.
     func unload() async
+}
+
+/// What an engine reports while it gets ready: which of two very different waits this is.
+///
+/// A single fraction used to carry both, and the two do not behave alike. Bytes arrive at a
+/// steady rate and a bar means something; a CoreML compile reports nothing until it is done and
+/// can take minutes, so a bar for it just sits still and looks like a hang.
+enum SpeechModelProgress: Sendable, Equatable {
+    /// Bytes are arriving. `fraction` is how much of the model in flight has come.
+    case downloading(fraction: Double)
+    /// Compiling for this Mac's Neural Engine. No fraction: nothing says how far along it is.
+    case optimizing
 }
 
 enum TranscriptionProviderID: String, Codable, Sendable {

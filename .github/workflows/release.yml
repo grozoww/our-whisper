@@ -12,14 +12,9 @@ on:
     # the highest version out of the list — it does not trust the order GitHub returns, which is
     # not newest-first.
     branches: [main]
-  # Lets you produce a downloadable build before you have an Apple Developer account, and lets you
-  # rehearse the whole thing without cutting a tag.
+  # Rehearses the whole thing — signing, notarizing, publishing — from any branch, without merging
+  # or cutting a tag. The result is a prerelease, which the app's update check does not offer.
   workflow_dispatch:
-    inputs:
-      unsigned:
-        description: 'Build without signing or notarizing (no Apple Developer account needed)'
-        type: boolean
-        default: false
 
 # Two pushes to main packaging at once would each build the same repository at a different commit
 # and publish within seconds of each other. They no longer collide over a tag, but serialising them
@@ -37,6 +32,9 @@ jobs:
     # The same image CI builds and tests on — see ci.yml.
     runs-on: xcode-27
     if: github.repository == 'grozoww/our-whisper'
+    # Notarization waits on Apple, and notarytool gives up after 30 minutes by itself. This is the
+    # bound on everything else, so a hung step cannot hold the release queue for six hours.
+    timeout-minutes: 60
 
     steps:
       # Full history, not the single commit `actions/checkout` clones by default. scripts/version.sh
@@ -55,95 +53,118 @@ jobs:
       - name: Announce it
         run: echo "::notice::$RELEASE_NAME (build $BUILD)"
 
-      # Secrets are not available in a job-level `if:`, so which path to take is worked out here
-      # and read from `env` by the steps below.
+      # Every release is signed with a Developer ID and notarized, or it does not happen. A job
+      # that shrugs off a missing secret and ships whatever it can build is how every update used to
+      # break dictation: an ad-hoc signature pins the Accessibility grant to one exact binary, and
+      # the release still looked fine.
       #
-      # Signing and notarizing are two decisions, not one. Having them as one flag is what made
-      # releases ship ad-hoc: no Apple account meant no notary password, so the certificate was
-      # skipped too — and an ad-hoc signature pins the Accessibility grant to one exact binary, so
-      # every update silently broke dictation for everyone. A certificate alone fixes that. It
-      # does not have to be Apple's; ./scripts/release-cert.sh makes a self-signed one.
+      #   CSC_LINK          base64 of the Developer ID Application certificate's .p12
+      #   CSC_KEY_PASSWORD  the password that .p12 was exported with
+      #   APPLE_API_KEY     the contents of the App Store Connect API key, the .p8 file
+      #   APPLE_API_KEY_ID  its Key ID
+      #   APPLE_API_ISSUER  the Issuer ID of the team that made it
       #
-      # Signing — set these three, from release-cert.sh or from a Developer ID:
-      #   MACOS_CERTIFICATE          base64 of the .p12
-      #   MACOS_CERTIFICATE_PASSWORD password for that .p12
-      #   MACOS_SIGNING_IDENTITY     "OurWhisper Release", or "Developer ID Application: … (TEAM)"
-      #
-      # Notarizing — needs a paid Apple Developer account, and all three on top of the above:
-      #   APPLE_TEAM_ID              10-character team id
-      #   NOTARY_APPLE_ID            Apple ID used for notarization
-      #   NOTARY_PASSWORD            app-specific password for that Apple ID
-      - name: Decide signing path
+      # CONTRIBUTING.md says where each comes from.
+      - name: Check the signing secrets are present
         env:
-          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
-          FORCED_UNSIGNED: ${{ inputs.unsigned }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: |
-          if [ "$FORCED_UNSIGNED" = "true" ] || [ -z "$MACOS_CERTIFICATE" ]; then
-            echo "SIGNED=false" >> "$GITHUB_ENV"
-            echo "NOTARIZED=false" >> "$GITHUB_ENV"
-            echo "::warning::No signing certificate. This build is ad-hoc signed, so everyone who installs it loses their Accessibility permission on the next update. See scripts/release-cert.sh."
-          elif [ -z "$NOTARY_PASSWORD" ]; then
-            echo "SIGNED=true" >> "$GITHUB_ENV"
-            echo "NOTARIZED=false" >> "$GITHUB_ENV"
-            echo "Signed but not notarized — downloads still need scripts/install.sh, but the Accessibility grant survives updates."
-          else
-            echo "SIGNED=true" >> "$GITHUB_ENV"
-            echo "NOTARIZED=true" >> "$GITHUB_ENV"
-          fi
+          missing=0
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::secret $name is not set"
+              missing=1
+            fi
+          done
+          exit $missing
 
-      - name: Import signing certificate
-        if: env.SIGNED == 'true'
+      - name: Import the signing certificate
         env:
-          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
         run: |
+          # A keychain left by a run that was killed would fail the next `create-keychain`.
+          security delete-keychain build.keychain 2>/dev/null || true
           KEYCHAIN_PASSWORD="$(uuidgen)"
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security default-keychain -s build.keychain
           # Both, and the second is the one that matters. `default-keychain -s` does not add the
           # keychain to the search list, and codesign resolves an identity by searching the list —
-          # so with only the line above, signing fails with the flatly misleading
-          # "OurWhisper Release: no identity found" while `security find-identity build.keychain`
-          # happily shows it.
+          # so with only the line above, signing fails with the flatly misleading "no identity
+          # found" while `security find-identity build.keychain` happily shows it.
           security list-keychains -d user -s build.keychain $(security list-keychains -d user | tr -d '"')
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          # No auto-lock timeout: the default is 300 seconds of idle, and a notarized build waits
-          # on Apple for longer than that. A keychain that relocks mid-run fails the DMG signature
+          # An hour before it locks again, not the default 300 seconds of idle: a notarized build
+          # waits on Apple for longer than that. A keychain that relocks mid-run fails the DMG signature
           # after the app has already been built.
           security set-keychain-settings -t 3600 -u build.keychain
-          echo "$MACOS_CERTIFICATE" | base64 --decode > /tmp/cert.p12
-          security import /tmp/cert.p12 -k build.keychain \
-            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          echo "$CSC_LINK" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k build.keychain \
+            -P "$CSC_KEY_PASSWORD" -T /usr/bin/codesign
           # Without this, codesign's first use of the key pops a GUI confirmation, which on a
           # headless runner is an indefinite hang rather than an error.
           security set-key-partition-list -S apple-tool:,apple:,codesign: \
             -s -k "$KEYCHAIN_PASSWORD" build.keychain
-          rm -f /tmp/cert.p12
-          security find-identity -p codesigning build.keychain
+          rm -f "$RUNNER_TEMP/cert.p12"
 
-      # package.sh notarizes only when the notary credentials below are actually present, so this
-      # one step covers both the signed-only and the notarized path.
-      - name: Build and sign
-        if: env.SIGNED == 'true'
+          # What package.sh signs by. `-v` lists only identities macOS considers valid, so a
+          # certificate that expired, or whose Apple intermediate is missing, comes back empty here
+          # and says so, rather than failing later inside codesign with "no identity found".
+          IDENTITY="$(security find-identity -v -p codesigning build.keychain \
+            | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' | head -1)"
+          if [ -z "$IDENTITY" ]; then
+            security find-identity -p codesigning build.keychain
+            echo "::error::CSC_LINK holds no valid Developer ID Application identity. Is it the .p12 of that certificate, with its private key, and has it expired?"
+            exit 1
+          fi
+          echo "Signing as $IDENTITY"
+          echo "SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+
+      # A secret can only hold the key's contents, and notarytool wants a file. It goes through
+      # GITHUB_ENV, not the next step's `env:` block, so the file's path is what the build sees.
+      - name: Write the notarization key to disk
         env:
-          SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
-          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          key="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s\n' "$APPLE_API_KEY" > "$key"
+          chmod 600 "$key"
+          if ! grep -q 'BEGIN PRIVATE KEY' "$key"; then
+            echo "::error::secret APPLE_API_KEY is not the contents of a .p8 file"
+            exit 1
+          fi
+          {
+            echo "NOTARY_KEY_PATH=$key"
+            echo "NOTARY_KEY_ID=$APPLE_API_KEY_ID"
+            echo "NOTARY_ISSUER=$APPLE_API_ISSUER"
+          } >> "$GITHUB_ENV"
+
+      # Builds, signs, launches the signed app once, notarizes, staples, and has Gatekeeper judge
+      # the result. Any of those failing fails the job, and with it the release.
+      - name: Package, sign and notarize
         run: ./scripts/package.sh
 
-      - name: Build unsigned
-        if: env.SIGNED == 'false'
-        run: ./scripts/package.sh --unsigned
+      # Nothing after this needs the key or the certificate, and the next step runs a third-party
+      # action from a mutable tag. With the keychain unlocked and codesign allowed to use the key,
+      # anything running on the runner could sign and notarize as the team, so they are gone before
+      # it starts. The last step stays as the net for a run that fails before getting here.
+      - name: Remove the signing key and the certificate
+        if: always()
+        run: |
+          security delete-keychain build.keychain || true
+          rm -f "$RUNNER_TEMP/AuthKey.p8"
 
-      # These checks used to live on the pull request, where they inspected a DMG nobody would ever
-      # download. A build that succeeds can still be wrong — an asset catalog that failed to compile
-      # leaves the app with no icon, and a signature can be invalid without package.sh returning
-      # non-zero. Neither makes package.sh exit non-zero, so without this the broken image is simply
-      # published. Running it here, before Publish, is what stops that: the checks see the exact
-      # bytes being uploaded, and a failure means no release is created at all rather than one that
-      # UpdateChecker will go on to offer people.
+      # The checks above ran on the file this job is about to upload. This looks at it once more,
+      # from the disk image itself: an asset catalog that failed to compile leaves the app with no
+      # icon and package.sh exits zero, so without this the broken image is simply published.
+      # A failure means no release is created at all, rather than one that UpdateChecker will go
+      # on to offer people.
       - name: Check the disk image mounts and holds the app
         run: |
           MOUNT="$(hdiutil attach dist/*.dmg -nobrowse -readonly -mountrandom /tmp \
@@ -152,11 +173,12 @@ jobs:
           # An app icon that failed to compile is invisible until someone looks in the Dock.
           test -f "$MOUNT/OurWhisper.app/Contents/Resources/AppIcon.icns" \
             || { echo "::error::The app icon is missing. Run ./scripts/make-icon.swift."; exit 1; }
-          codesign --verify --strict --verbose=2 "$MOUNT/OurWhisper.app"
+          codesign --verify --deep --strict --verbose=2 "$MOUNT/OurWhisper.app"
           hdiutil detach "$MOUNT" -quiet
+          xcrun stapler validate dist/*.dmg
 
-      # An unsigned download that refuses to open, with no explanation, reads as broken software.
-      # package.sh writes the wording; this puts it where the person downloading will see it.
+      # The wording for the person downloading is written by package.sh; this puts it where they
+      # will see it.
       - name: Assemble release notes
         run: |
           # Which commit a download came from is the first thing anyone asks when a build
@@ -164,7 +186,7 @@ jobs:
           printf 'Version **%s** (build %s) from [`%s`](%s/commit/%s).\n\n' \
             "$VERSION" "$BUILD" "$SHA" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$GITHUB_SHA" \
             > release-notes.md
-          # Only a rehearsal needs a warning now. A build from main is a finished release like any
+          # Only a rehearsal needs a warning. A build from main is a finished release like any
           # other, and telling people to wait for a `v…` tag when none is ever cut is what sent
           # them looking for a download that does not exist.
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -175,10 +197,8 @@ jobs:
 
           REHEARSAL
           fi
-          if [ -f dist/INSTALL.md ]; then
-            cat dist/INSTALL.md >> release-notes.md
-            printf '\n---\n\n' >> release-notes.md
-          fi
+          cat dist/INSTALL.md >> release-notes.md
+          printf '\n---\n\n' >> release-notes.md
 
       - name: Publish
         uses: softprops/action-gh-release@v3
@@ -209,12 +229,11 @@ jobs:
           # are skipped by `/releases/latest` *and* by `UpdateChecker`, and with no `v*` tag ever
           # cut there was nothing left for either to find — so every user was told they were up to
           # date, for ever, while the DMG they wanted sat in the releases list.
-          #
-          # Notarization deliberately does not enter into it. It decides whether Gatekeeper
-          # complains about the download, not whether a release is finished.
           prerelease: ${{ github.event_name == 'workflow_dispatch' }}
           make_latest: ${{ github.event_name != 'workflow_dispatch' }}
 
-      - name: Clean up keychain
-        if: always() && env.SIGNED == 'true'
-        run: security delete-keychain build.keychain || true
+      - name: Clean up the keychain and the key
+        if: always()
+        run: |
+          security delete-keychain build.keychain || true
+          rm -f "$RUNNER_TEMP/AuthKey.p8"

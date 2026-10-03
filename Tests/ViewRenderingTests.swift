@@ -114,6 +114,42 @@ struct ViewRenderingTests {
         checksums: URL(string: "https://example.invalid/SHA256SUMS")!
     )
 
+    @Test("The speech model row builds in every state it can be in", arguments: [
+        SpeechModelStatus.State.notLoaded,
+        .starting,
+        .downloading(0.38),
+        .optimizing,
+        .ready,
+        .failed("The Internet connection appears to be offline."),
+    ])
+    func rendersSpeechModelRow(status: SpeechModelStatus.State) {
+        // The row swaps its control per state — a bar, a spinner with a clock, a button — and a
+        // `switch` in a `ViewBuilder` compiles whichever branch is wrong.
+        render(ModelRow(status: status, startedAt: .now, phase: .idle, provider: .parakeet, retry: {}), size: CGSize(width: 700, height: 120))
+        render(ModelRow(status: status, startedAt: nil, phase: .failed("Nothing was said"), provider: .parakeet, retry: {}), size: CGSize(width: 700, height: 120))
+        render(ModelRow(status: status, startedAt: nil, phase: .listening, provider: .soniox, retry: {}), size: CGSize(width: 700, height: 120))
+    }
+
+    @Test("Home and the Models screen build while the speech and cleanup models are mid-flight", arguments: [
+        (SpeechModelStatus.State.downloading(0.38), OnDeviceRefiner.Availability.notDownloaded),
+        (.optimizing, .downloading(0.4)),
+        (.starting, .loading),
+        (.failed("offline"), .failed("Gemma 4 could not be set up: offline It tries again at the next launch.")),
+        (.ready, .available),
+    ])
+    func rendersScreensMidFlight(status: SpeechModelStatus.State, cleanup: OnDeviceRefiner.Availability) {
+        let temp = TemporaryDirectory()
+        let state = AppState(
+            directory: temp.url,
+            speechModel: SpeechModelStatus(state: status),
+            cleanupModel: OnDeviceRefiner(directory: temp.url, availability: cleanup)
+        )
+        for section in [NavigationSection.home, .modelsLibrary, .configuration] {
+            state.selectedSection = section
+            render(RootView().environment(state))
+        }
+    }
+
     @Test("Home renders with history present")
     func rendersHomeWithData() {
         let (state, temp) = makeState()

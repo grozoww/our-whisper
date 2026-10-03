@@ -505,36 +505,36 @@ struct ClipboardRequestTests {
 /// reachable, testable answer — it is what stops the app reading the pasteboard at all.
 ///
 /// Asserted against the pure predicates. The instance versions read `onDevice.availability`, which
-/// no test can set, and CI runs on a machine with no Apple Intelligence — so an assertion against
-/// those would pass for the wrong reason and go on passing if the two flags stopped being read.
+/// no test can set, and CI runs on a machine that never downloaded the model — so an assertion
+/// against those would pass for the wrong reason and go on passing if the two flags stopped being read.
 @Suite("No model, no clipboard")
 struct ClipboardNeedsTheModelTests {
     @Test("Every switch on and the model present is the only way it runs")
     func theOnlyWayThrough() {
         #expect(RefinementPipeline.willUseModel(
-            isEnabled: true, useOnDeviceModel: true, modelIsAvailable: true, instructions: "Clean it up."
+            isEnabled: true, useCleanupModel: true, modelIsAvailable: true, instructions: "Clean it up."
         ))
     }
 
     @Test("Cleanup switched off means the clipboard is never read")
     func offMasterSwitch() {
-        #expect(!RefinementPipeline.modelIsEnabled(isEnabled: false, useOnDeviceModel: true, modelIsAvailable: true))
+        #expect(!RefinementPipeline.modelIsEnabled(isEnabled: false, useCleanupModel: true, modelIsAvailable: true))
         #expect(!RefinementPipeline.willUseModel(
-            isEnabled: false, useOnDeviceModel: true, modelIsAvailable: true, instructions: "Clean it up."
+            isEnabled: false, useCleanupModel: true, modelIsAvailable: true, instructions: "Clean it up."
         ))
     }
 
     @Test("The on-device model switched off means the clipboard is never read")
     func offModelSwitch() {
-        #expect(!RefinementPipeline.modelIsEnabled(isEnabled: true, useOnDeviceModel: false, modelIsAvailable: true))
+        #expect(!RefinementPipeline.modelIsEnabled(isEnabled: true, useCleanupModel: false, modelIsAvailable: true))
         #expect(!RefinementPipeline.willUseModel(
-            isEnabled: true, useOnDeviceModel: false, modelIsAvailable: true, instructions: "Clean it up."
+            isEnabled: true, useCleanupModel: false, modelIsAvailable: true, instructions: "Clean it up."
         ))
     }
 
-    @Test("A Mac without Apple Intelligence never reads the clipboard either")
+    @Test("A model not yet downloaded never reads the clipboard either")
     func modelNotAvailable() {
-        #expect(!RefinementPipeline.modelIsEnabled(isEnabled: true, useOnDeviceModel: true, modelIsAvailable: false))
+        #expect(!RefinementPipeline.modelIsEnabled(isEnabled: true, useCleanupModel: true, modelIsAvailable: false))
     }
 
     @Test("A mode with no instructions skips the model, and the clipboard with it")
@@ -542,7 +542,7 @@ struct ClipboardNeedsTheModelTests {
         // Raw is the shipped example. Its instructions are empty, so the model never runs for it —
         // and a dictation the model never touched has no marker and nowhere to put the clipboard.
         #expect(!RefinementPipeline.willUseModel(
-            isEnabled: true, useOnDeviceModel: true, modelIsAvailable: true, instructions: ""
+            isEnabled: true, useCleanupModel: true, modelIsAvailable: true, instructions: ""
         ))
         #expect(Mode.builtIns.first { $0.name == "Raw" }?.instructions.isEmpty == true)
     }

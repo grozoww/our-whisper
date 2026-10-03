@@ -7,7 +7,7 @@ Working notes for agents and humans on this codebase. `README.md` is what the ap
 
 A macOS menu bar dictation tool. Hold a hotkey, talk, and the cleaned-up text is pasted into
 whatever field had focus. Everything runs on the Mac by default: speech through NVIDIA Parakeet on
-the Neural Engine, cleanup through rules plus Apple's on-device model.
+the Neural Engine, cleanup through rules plus Gemma 4 running on the GPU through llama.cpp.
 
 Not sandboxed, on purpose — the Accessibility API cannot reach other apps from inside the App
 Sandbox, and pasting into another app is the entire product. Distribution is Developer ID plus
@@ -50,8 +50,8 @@ And one that follows from them:
 ./scripts/run.sh --logs          # stream the app's logs at info level
 ./scripts/run.sh --selftest speech.wav ru   # transcribe a file, no UI or permissions needed
 ./scripts/audit-deps.sh          # dependency pinning and vulnerability check
-./scripts/package.sh             # build a distributable DMG, signed so permission survives
-./scripts/release-cert.sh        # once, ever: the certificate every release is signed with
+./scripts/package.sh             # the release build: Developer ID, notarized, stapled
+./scripts/package.sh --no-notarize   # the same, signed only, without waiting on Apple
 ./scripts/screenshots.sh         # redraw docs/images, the README's screenshots
 ./scripts/make-icon.swift        # redraw the app icon and menu bar glyph into Assets.xcassets
 
@@ -62,6 +62,13 @@ OURWHISPER_SELFTEST_UPDATE=1 open /Applications/OurWhisper.app   # install the n
 `--selftest` exists because the interactive path needs Accessibility permission, which a fresh
 clone, a CI runner and an automated agent all lack. **If you are an agent and want to know whether
 transcription works, this is the command** — not launching the app.
+
+Two more are for the build rather than the model. `OURWHISPER_SELFTEST_CLEANUP="<sentence>"` loads
+the cleanup model (downloading it first if it is missing), cleans the sentence twice, logs both
+results and quits cleanly — the only test of whether llama.cpp loads inside a signed bundle.
+`OURWHISPER_SELFTEST_LAUNCH=1` launches, says so and exits before anything else starts; `package.sh`
+runs it against the signed app, because dyld refusing a library at launch is the one failure
+`codesign --verify` cannot see.
 
 `OURWHISPER_SECTION` exists for the same reason on the UI side: the window is only reachable by
 clicking a menu bar icon, which nothing automated can do. Values are the `NavigationSection` raw
@@ -88,7 +95,7 @@ Sources/
     Modes/          Per-context cleanup profiles
     Networking/     HTTPClient seam — the reason cloud code is testable
     Permissions/    Microphone and Accessibility
-    Refinement/     Rule cleanup, on-device model, pipeline
+    Refinement/     Rule cleanup, the cleanup model (Gemma 4 via llama.cpp), pipeline
     Security/       Keychain
     Settings/       Settings value, store, theme
     Sound/          Feedback sounds, CoreAudio device list
@@ -271,15 +278,33 @@ that size — and `.resizable()` on the label stretches the template to whatever
 
 **Signing is tied to Accessibility permission.** macOS records the grant against the *designated
 requirement* of the signature, not against the app's bytes or its name. An ad-hoc signature's
-requirement is `cdhash H"…"` — one exact binary — so every rebuild and every release is a new app
-that has been granted nothing, and the old entry stays in System Settings looking ticked while
-applying to nothing. Signing with a certificate makes the requirement
-`identifier "com.grozoww.ourwhisper" and certificate leaf = H"…"`, which any later build signed by
-the same certificate satisfies. `./scripts/dev-cert.sh` does this for your rebuilds and
-`./scripts/release-cert.sh` for public releases; the certificates are self-signed, and Apple is
-not involved in either. Read "The signing trap" in `CONTRIBUTING.md` before debugging "dictation
-stopped working after a rebuild". Losing the release key is not recoverable — every user re-grants
-Accessibility once.
+requirement is `cdhash H"…"` — one exact binary — so every rebuild is a new app that has been
+granted nothing, and the old entry stays in System Settings looking ticked while applying to
+nothing. Signing with a certificate makes the requirement name the certificate instead, which any
+later build signed by the same certificate satisfies. Releases are signed with the project's
+Developer ID, whose requirement names the Apple *team* —
+`identifier "com.grozoww.ourwhisper" and anchor apple generic and … certificate leaf[subject.OU] =
+D6U6DW65Y7` — so even a renewed certificate satisfies it, and permission and updates survive a
+renewal. `./scripts/dev-cert.sh` does the certificate half of this for your own rebuilds with a
+self-signed one; Apple is not involved in that. Read "The signing trap" in `CONTRIBUTING.md` before
+debugging "dictation stopped working after a rebuild".
+
+**The hardened runtime refuses a library from another team, and only a Developer ID has a team.**
+The app embeds `llama.framework`, and notarization requires the hardened runtime, under which dyld
+loads only libraries signed by Apple or by the app's own team. Measured with this app's real build,
+on the same machine: no hardened runtime loads it; the hardened runtime with
+`disable-library-validation` loads it; the hardened runtime with library validation does not, for
+*every* identity without a Team ID — self-signed, ad-hoc, even the same key signing both — and the
+app dies at launch before `main` with "different Team IDs". A Developer ID signs the app and the
+framework with the same team and loads fine. So `package.sh` signs inside out, never with `--deep`,
+and launches the result once. Do not add `disable-library-validation` to get past this: it turns
+the check off for every library in the process, for everyone, to work around a signing problem.
+
+**The Developer ID certificate expires 2027-02-01.** One issued from Apple's older intermediate is
+capped at that intermediate's expiry, not the usual five years; one from the G2 profile runs to
+about 2031. Signatures made while it was valid stay valid, because `--timestamp` records when, and
+the installed requirement names the team rather than the certificate, so a renewal is a new `.p12`
+in `CSC_LINK` and `CSC_KEY_PASSWORD` and nothing else.
 
 **A programmatically created `NSWindow` releases itself on `close()`.** ARC then releases it again
 and the process dies. `Tests/ViewRenderingTests.swift` sets `isReleasedWhenClosed = false`.
@@ -293,6 +318,19 @@ parameter for exactly one reason: a test that used the default would destroy the
 vocabulary and history of whoever ran the suite. Use `TemporaryDirectory` from `Tests/TestSupport`.
 `AppDirectories.support` also redirects to a temporary directory under XCTest as a backstop —
 that backstop exists because this mistake was made once and silently rewrote real user data.
+
+It was made again, one folder over. The speech model lives in FluidAudio's own directory, outside
+`AppDirectories.support`, so that redirect did not reach it, and a test that pressed Remove on it
+deleted the real 600 MB model on the machine running the suite; the only sign was a download at the
+next launch. `ModelLibrary` takes the folder as a parameter now and its default is redirected under
+test too. Anything that deletes must be handed what it deletes.
+
+**`HOME=… ./OurWhisper` does not redirect anything.** Tried, in order to run the real app without
+touching a real data folder: `FileManager` resolves the account's home directory, not `$HOME`, so the
+settings, the models and the cleanup file were all the real ones — measured with `lsof` on the
+running process. There is no way to run the full app against a throwaway data folder from outside;
+a run that must not touch real data needs a hook in the app, as the test and screenshot redirects
+are, or a Mac of its own.
 
 **Accessibility is granted per code signature, which for an ad-hoc build means per path.** A second
 clone or a git worktree produces a second `OurWhisper.app` in a different DerivedData directory,
@@ -461,6 +499,42 @@ ignores the hotkey while `phase` is `.transcribing` or `.formatting`, and the pi
 recording is bounded and every failure puts the phase back through `notify`; a new `await` in
 `transcribeAndInject` that can wait forever would leave the hotkey dead.
 
+**The speech model's progress bar is two bars, and "installed" is not "ready".** FluidAudio loads
+Parakeet's four models one after another and, for each, reports the download as the first half of
+0…1 and the CoreML compile for the Neural Engine as the second half. The compile reports nothing
+until it finishes — 30 seconds from a cold cache on an M1 Max, longer on a slower Mac — so the bar
+filled, jumped to 50%, sat there, and went back to the start for the next model. The app called all
+of it "Downloading", the hotkey refused with "still downloading", and after a restart the Models
+screen read the files on disk and said "Installed" while the compile ran again from scratch. The
+report that started this was: it froze at 50%, I restarted, it said installed, and it still would
+not work for a while. `ParakeetProvider.progress(from:)` reads the two halves as what they are, and
+`SpeechModelStatus` is the one answer to "what is the speech model doing" that Home, the Models
+library and the hotkey all read (`SpeechModelStatus.gate` is the hotkey's decision, pure). Three
+rules came out of it. The compile gets a spinner and a clock, never a number: a bar that cannot
+move reads as a hang. "Installed" is only ever what `.ready` proves. And a refusal is decided from
+the status, never from `DictationController.phase`, which went back to idle by itself 2.5 seconds
+after the first refused press, with the model still compiling, so the second press recorded a
+sentence and failed with a different message.
+
+**The cleanup model is Gemma 4 E2B through llama.cpp, and it replaced Apple's on measurement.**
+With this app's own prompt on an M1 Max, Apple's Foundation Models refused a harmless Russian
+sentence with `guardrailViolation`, translated a Ukrainian one into English, and took 4–8 seconds
+doing either. Gemma kept both languages and answers in about a third of a second once loaded (12
+seconds to load, nearly all of it paging in 2.8 GB). What is easy to undo by accident: the file is
+pinned to a Hugging Face *commit* and a SHA-256, because a checksum against `main` fails for every
+user the day the repository changes; the download is URLSession's download task with its progress
+polled, because a byte-at-a-time loop took five times longer in a debug build and
+`download(for:delegate:)` delivers no progress at all; it starts *after* the speech model, so the
+600 MB that makes dictation work does not queue behind 2.8 GB that does not yet matter;
+`useCleanupModel` is a new key and not the old `useOnDeviceModel`, whose `false` sits in every
+settings file the app has ever written; `LlamaEngine` is an actor on its own serial queue because
+every llama.cpp call blocks, and `shutdown()` runs on the way out because llama.cpp's Metal backend
+asserts in a static destructor when a context is still alive at `exit`; and the chat template is
+written out by hand in `OnDeviceRefiner.segments`, because llama.cpp's formatter predates Gemma 4 —
+with only the template's own markup tokenized as control tokens, so a dictated or copied `<turn|>`
+is text and not the end of the user's turn. Removing the model while its switch is on would fetch
+it again at the next launch, so the Models screen's Remove and Download also set the switch.
+
 **A window sized to its content view does not resize when the content does.** The pill's phases
 are different widths — "Cleaning up" is wider than five audio bars — so setting `PillModel.phase`
 directly leaves the panel at the previous width and the longer label is truncated and off centre.
@@ -579,16 +653,28 @@ in the right screen. Never add a control without the sentence explaining it — 
 requires a `detail` for that reason.
 
 **Anything users download.** `scripts/package.sh` builds the DMG and `scripts/install.sh` is the
-`curl | bash` that installs it. There is no Apple Developer account behind this project, so
-releases are signed with the self-signed `OurWhisper Release` certificate rather than notarized,
-and macOS refuses to open them until the quarantine flag is cleared — which is the one thing
-install.sh exists to do. Signing and notarizing are deliberately separate decisions in both
-`package.sh` and the workflow: a self-signed certificate cannot be notarized, but it is what keeps
-the Accessibility grant alive across updates, and treating the two as one flag is what made every
-release ad-hoc. The same mistake one level up is what broke the update check: every release was
-marked a prerelease because none was notarized, `/releases/latest` skips prereleases, and the app
-read the resulting 404 as "up to date". Notarization decides whether Gatekeeper complains, not
-whether a release is finished — merging to main is what decides that.
+`curl | bash` that installs it. Every release is signed with the project's Developer ID and
+notarized, or CI fails: `release.yml` checks its five secrets (`CSC_LINK`, `CSC_KEY_PASSWORD`,
+`APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`) before it builds anything. There used to be two more tiers under that, self-signed and
+ad-hoc, for the years there was no Apple account. Each was a way for a release to go out looking
+finished and be wrong: ad-hoc broke Accessibility on every update, and self-signed could not be
+notarized, so every download needed `xattr -dr` and install.sh existed to do it. Both are gone, and
+so is the quarantine step — `install.sh` now asks Gatekeeper about the disk image
+(the notarization ticket is stapled to it, so it answers offline) *before* it quits or replaces the
+installed copy, and stops if the answer is no.
+
+The same mistake one level up is what broke the update check: every release was marked a
+prerelease because none was notarized, `/releases/latest` skips prereleases, and the app read the
+resulting 404 as "up to date". Notarization decides whether Gatekeeper complains, not whether a
+release is finished — merging to main is what decides that.
+
+Copies signed with the old self-signed certificate cannot update themselves into the first
+Developer ID release: `BundleSignature` pins the *running* app's requirement and the new build does
+not satisfy it, so they refuse it with "signed with a different key" and the owner downloads the
+disk image by hand. That was chosen over a bridge release that taught the updater to accept both —
+it only helps users the first Developer ID release has not reached yet, and costs a second door in
+the one place the whole update is trusted. Accessibility and the microphone are re-granted once
+either way, and `INSTALL.md` says so; delete that section a few releases after everyone has moved.
 
 **Merging to main publishes a finished release, and it becomes the latest.** A pull request builds
 and tests but does not package; a push to main packages and publishes, tagged
@@ -648,7 +734,7 @@ anything depending on `mlx-swift` 0.31.5+ needs Xcode's separately-downloaded Me
 
 ## Testing
 
-Swift Testing, not XCTest. 206 tests, no network, no API key, no microphone, no permissions.
+Swift Testing, not XCTest. 263 tests, no network, no API key, no microphone, no permissions.
 
 - Cloud providers are tested against `StubHTTPClient` with recorded response shapes.
 - Every screen is built and laid out in `ViewRenderingTests` — a view that crashes on
