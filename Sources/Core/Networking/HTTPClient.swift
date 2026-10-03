@@ -11,11 +11,11 @@ protocol HTTPClient: Sendable {
 
     /// Writes a large body straight to disk, reporting the bytes written so far.
     ///
-    /// Separate from `send` because the one caller is fetching a 12 MB disk image: holding that in
-    /// memory to show a progress bar would be the wrong trade twice over. Declared here rather
-    /// than only in an extension so `URLSessionHTTPClient`'s streaming version is the one that
-    /// runs when the call goes through `any HTTPClient` — an extension-only method is chosen at
-    /// compile time and the default below would win.
+    /// Separate from `send` because the callers fetch a 12 MB disk image and a 2.8 GB model:
+    /// holding either in memory to show a progress bar would be the wrong trade twice over.
+    /// Declared here rather than only in an extension so `URLSessionHTTPClient`'s version is the
+    /// one that runs when the call goes through `any HTTPClient` — an extension-only method is
+    /// chosen at compile time and the default below would win.
     ///
     /// Bytes and not a fraction, because the caller knows the total and this does not: GitHub
     /// serves the image from a redirect, and a response without a `Content-Length` would leave a
@@ -59,51 +59,88 @@ struct URLSessionHTTPClient: HTTPClient {
         return (data, http)
     }
 
-    /// Streams the body to `destination`, appending as it arrives.
+    /// Lets URLSession write the file itself, and reads the progress off the task.
     ///
-    /// `bytes(for:)` rather than `download(for:delegate:)`: the delegate form delivers no
-    /// `didWriteData` callbacks at all on a shared, default or ephemeral session, so the progress
-    /// bar sits at zero for the whole download while everything else works.
+    /// This used to stream `bytes(for:)` into the file a byte at a time. That was fine for a 12 MB
+    /// disk image and not for the 2.8 GB cleanup model: measured in a debug build, the app took
+    /// 319 s for a file curl fetches in about 65, and the same loop given a byte range timed out
+    /// on Hugging Face's CDN altogether. A download task writes at the speed of the network.
     ///
-    /// Buffered into `[UInt8]` and not `Data`, because appending a byte at a time to `Data` costs
-    /// about half a second of CPU over 12 MB against four hundredths for an array, for identical
-    /// bytes out.
+    /// Progress is polled rather than delegated. The async `download(for:delegate:)` delivers no
+    /// `didWriteData` callbacks at all on a shared, default or ephemeral session, which left the
+    /// progress bar at zero for the whole download — but the task's own byte count is always
+    /// right, and a quarter of a second is as often as a progress bar needs it.
     func download(
         _ request: URLRequest,
         to destination: URL,
         progress: @escaping @Sendable (Int64) -> Void
     ) async throws -> HTTPURLResponse {
-        let (stream, response) = try await session.bytes(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw HTTPError.notHTTP
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            throw HTTPError.from(status: http.statusCode, body: Data())
-        }
-
-        FileManager.default.createFile(atPath: destination.path(percentEncoded: false), contents: nil)
-        let handle = try FileHandle(forWritingTo: destination)
-        defer { try? handle.close() }
-
-        var buffer: [UInt8] = []
-        buffer.reserveCapacity(1 << 20)
-        var written: Int64 = 0
-
-        for try await byte in stream {
-            buffer.append(byte)
-            if buffer.count == 1 << 20 {
-                try handle.write(contentsOf: buffer)
-                written += Int64(buffer.count)
-                buffer.removeAll(keepingCapacity: true)
-                progress(written)
+        let handle = DownloadHandle()
+        let poller = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(250))
+                if let received = handle.bytesReceived { progress(received) }
             }
         }
-        if !buffer.isEmpty {
-            try handle.write(contentsOf: buffer)
-            written += Int64(buffer.count)
+        defer { poller.cancel() }
+
+        let response: HTTPURLResponse = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let task = session.downloadTask(with: request) { location, response, error in
+                    // The file at `location` is deleted when this returns, so it is moved here,
+                    // on URLSession's queue, rather than after the continuation resumes.
+                    if let error { return continuation.resume(throwing: error) }
+                    guard let location, let http = response as? HTTPURLResponse else {
+                        return continuation.resume(throwing: HTTPError.notHTTP)
+                    }
+                    guard (200..<300).contains(http.statusCode) else {
+                        return continuation.resume(throwing: HTTPError.from(status: http.statusCode, body: Data()))
+                    }
+                    do {
+                        try? FileManager.default.removeItem(at: destination)
+                        try FileManager.default.moveItem(at: location, to: destination)
+                        continuation.resume(returning: http)
+                    } catch {
+                        continuation.resume(throwing: error)
+                    }
+                }
+                handle.start(task)
+            }
+        } onCancel: {
+            handle.cancel()
         }
-        progress(written)
-        return http
+
+        let attributes = try? FileManager.default.attributesOfItem(atPath: destination.path(percentEncoded: false))
+        progress((attributes?[.size] as? NSNumber)?.int64Value ?? 0)
+        return response
+    }
+}
+
+/// The task behind one download, shared between the code that starts it, the progress poller
+/// and a cancellation that can arrive before the task exists.
+private final class DownloadHandle: @unchecked Sendable {
+    private let lock = NSLock()
+    private var task: URLSessionDownloadTask?
+    private var isCancelled = false
+
+    var bytesReceived: Int64? {
+        lock.withLock { task?.countOfBytesReceived }
+    }
+
+    func start(_ task: URLSessionDownloadTask) {
+        let cancelled = lock.withLock {
+            self.task = task
+            return isCancelled
+        }
+        cancelled ? task.cancel() : task.resume()
+    }
+
+    func cancel() {
+        let task = lock.withLock {
+            isCancelled = true
+            return self.task
+        }
+        task?.cancel()
     }
 }
 

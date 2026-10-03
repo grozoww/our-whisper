@@ -70,6 +70,7 @@ final class AppState {
     let history: HistoryStore
     let onDeviceRefiner: OnDeviceRefiner
     let router: TranscriptionRouter
+    let speechModel: SpeechModelStatus
     let models: ModelLibrary
     let dictation: DictationController
 
@@ -77,7 +78,7 @@ final class AppState {
     /// the controller's extra states.
     var recordingState: RecordingState {
         switch dictation.phase {
-        case .idle, .preparingModel: .idle
+        case .idle: .idle
         case .listening: .listening
         case .transcribing: .transcribing
         case .formatting: .formatting
@@ -102,13 +103,20 @@ final class AppState {
 
     /// - Parameter directory: Where the stores keep their JSON. Injected only so tests can render
     ///   the real screens against real stores without touching the user's data.
-    init(directory: URL = AppDirectories.support) {
+    /// - Parameter speechModel: Likewise, so a test can render a screen in the middle of a
+    ///   download or a compile without waiting for one.
+    /// - Parameter cleanupModel: Likewise, for the cleanup model's download and load.
+    init(
+        directory: URL = AppDirectories.support,
+        speechModel: SpeechModelStatus = SpeechModelStatus(),
+        cleanupModel: OnDeviceRefiner = OnDeviceRefiner()
+    ) {
         let router = TranscriptionRouter()
         let settings = SettingsStore(directory: directory)
         let modes = ModeStore(directory: directory)
         let vocabulary = VocabularyStore(directory: directory)
         let history = HistoryStore(directory: directory)
-        let onDevice = OnDeviceRefiner()
+        let onDevice = cleanupModel
 
         self.settings = settings
         self.modes = modes
@@ -116,15 +124,25 @@ final class AppState {
         self.history = history
         self.onDeviceRefiner = onDevice
         self.router = router
-        self.models = ModelLibrary(parakeet: router.parakeet)
+        self.speechModel = speechModel
+        self.models = ModelLibrary(parakeet: router.parakeet, speechModel: speechModel, cleanup: onDevice)
         self.dictation = DictationController(
             settings: settings,
             modes: modes,
             vocabulary: vocabulary,
             history: history,
             router: router,
-            refinement: RefinementPipeline(onDevice: onDevice)
+            refinement: RefinementPipeline(onDevice: onDevice),
+            speechModel: speechModel
         )
+
+        // The library keeps what is on disk as stored state, so it has to be told when the speech
+        // model's files have just arrived — and when the user's choice about the cleanup model is
+        // made on its screen rather than in Configuration.
+        speechModel.onFinish = { [weak self] in self?.models.refresh() }
+        models.setCleanupModelEnabled = { [weak self] isOn in
+            self?.settings.settings.refinement.useCleanupModel = isOn
+        }
 
         // The installer knows how to replace the app but not when doing so would cost the user
         // something, and it has no way to reach the stores. These are the two questions it asks
@@ -158,6 +176,20 @@ final class AppState {
         permissions.beginMonitoring()
         dictation.start()
         watchAccessibility()
+
+        // The cleanup model is downloaded and loaded at launch too, so the first dictation does not
+        // wait on a 2.8 GB read — or, on a new install, on the download. After the speech model,
+        // not beside it: dictation works without cleanup and not without speech, so on a first
+        // launch the 600 MB that matters should not be queueing behind 2.8 GB that does not yet.
+        if settings.settings.refinement.wantsCleanupModel {
+            Task {
+                await dictation.launchPreparation?.value
+                await onDeviceRefiner.prepare()
+            }
+        }
+        if let text = SelfTest.requestedCleanup {
+            await SelfTest.runCleanup(text, refiner: onDeviceRefiner, modes: modes, settings: settings.settings.refinement)
+        }
 
         // An accessory app with no Dock icon that silently does nothing is indistinguishable from
         // an app that failed to launch. If it cannot work yet, say so on screen rather than

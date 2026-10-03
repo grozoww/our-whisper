@@ -309,6 +309,41 @@ struct SettingsStoreTests {
         #expect(store.settings.history.retention == .days30)
     }
 
+    @Test("A settings file written for Apple's model does not keep Gemma off")
+    func theOldCleanupSwitchIsNotReadAsTheNewOne() throws {
+        // Every file the app has written carries `useOnDeviceModel: false`: it switched Apple's
+        // model, and it was off by default because most Macs could not run it. Read as the new
+        // switch it would leave everyone who upgrades without the cleanup model, for a choice they
+        // never made about this one.
+        let temp = TemporaryDirectory()
+        let url = temp.url.appendingPathComponent("settings.json")
+        try Data(#"{"schemaVersion":1,"refinement":{"isEnabled":true,"useOnDeviceModel":false}}"#.utf8).write(to: url)
+
+        let store = SettingsStore(directory: temp.url)
+        #expect(store.settings.refinement.useCleanupModel)
+        #expect(store.settings.refinement.wantsCleanupModel)
+    }
+
+    @Test("Switching the cleanup model off is remembered", arguments: [
+        (isEnabled: true, useCleanupModel: true, wants: true),
+        (isEnabled: true, useCleanupModel: false, wants: false),
+        // The master switch turns the model off as surely as its own does.
+        (isEnabled: false, useCleanupModel: true, wants: false),
+        (isEnabled: false, useCleanupModel: false, wants: false),
+    ])
+    func rememberstheCleanupSwitch(isEnabled: Bool, useCleanupModel: Bool, wants: Bool) {
+        let temp = TemporaryDirectory()
+
+        let first = SettingsStore(directory: temp.url)
+        first.settings.refinement.isEnabled = isEnabled
+        first.settings.refinement.useCleanupModel = useCleanupModel
+        first.flush()
+
+        let second = SettingsStore(directory: temp.url)
+        #expect(second.settings.refinement.useCleanupModel == useCleanupModel)
+        #expect(second.settings.refinement.wantsCleanupModel == wants)
+    }
+
     @Test("An unreadable file is set aside, not deleted, and defaults are used")
     func quarantinesCorruptFiles() throws {
         let temp = TemporaryDirectory()

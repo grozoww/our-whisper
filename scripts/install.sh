@@ -10,22 +10,15 @@
 #   --prefix DIR       install somewhere other than /Applications
 #   --no-open          install but do not launch
 #
-# Why this exists rather than "download the DMG and drag it across":
+# Why this exists rather than "download the DMG and drag it across": it does the same thing in
+# one line, checks what it downloaded before it replaces anything, and clears a dead Accessibility
+# grant, which is the one step people used to have to be talked through. Releases are signed with
+# an Apple Developer ID and notarized, so the DMG also opens with a double-click; this is for people
+# who would rather paste a line.
 #
-# There is no paid Apple Developer account behind this project, so releases are signed with a
-# certificate of the project's own rather than notarized. macOS attaches `com.apple.quarantine` to
-# anything downloaded by a browser, and for a build Apple has not vouched for it then refuses to
-# open it at all — the dialog says the app "is damaged", which is both alarming and untrue.
-# Removing that flag is the one manual step every user would otherwise have to be talked through,
-# so the script does it and says so.
-#
-# It also clears a dead Accessibility grant, which is the other step people used to have to be
-# talked through. See "Accessibility" below.
-#
-# The trade you are making by running this is the ordinary one for unnotarized software: you are
-# trusting the publisher of this repository instead of Apple's review. Read the script first if
-# that matters to you — that is why it is short, and why it is served from the same repository as
-# the source it installs.
+# It does not remove the download quarantine flag, and no longer needs to. On a notarized app that
+# step only switches Gatekeeper off, and a download that macOS would refuse is exactly the one it
+# should refuse — so the script asks Gatekeeper itself, before installing, and stops if it says no.
 
 set -euo pipefail
 
@@ -49,9 +42,8 @@ Options (pass them after `bash -s --` when piping):
   --prefix DIR       install somewhere other than /Applications
   --no-open          install but do not launch
 
-Releases are signed but not notarized, because there is no paid Apple Developer account behind
-this project. macOS refuses to open such a download at all, claiming the app is damaged, until the
-quarantine flag is cleared — which is the step this script exists to do.
+Releases are signed with an Apple Developer ID and notarized. The script checks that with
+Gatekeeper before it installs anything, and stops if the release does not pass.
 USAGE
 }
 
@@ -111,9 +103,13 @@ dmg_urls() {
 
 # Highest version, not first in the response. `-n` with `p` drops any DMG whose name carries no
 # version rather than letting it sort to the top, and `sort -V` is what puts 1.0.10 above 1.0.9.
+#
+# The suffix after the version is optional. A notarized build is `OurWhisper-1.1.0.dmg` and the
+# others are `-unnotarized` or `-unsigned`; a pattern that demanded the dash and the word dropped
+# every notarized release, and with them the only DMG there was.
 newest_dmg() {
   dmg_urls "$1" \
-    | sed -n 's|.*/[^/]*-\([0-9][0-9.]*\)-[^/]*\.dmg$|\1	&|p' \
+    | sed -n 's|.*/[^/]*-\([0-9][0-9.]*\)\(-[^/]*\)\{0,1\}\.dmg$|\1	&|p' \
     | sort -t'	' -k1,1V \
     | tail -1 \
     | cut -f2- || true
@@ -201,6 +197,14 @@ MOUNT="$(hdiutil attach "$WORK/$DMG_FILE" -nobrowse -readonly -mountrandom /tmp 
   | grep -o '/tmp/[^[:space:]]*$' | tail -1 || true)"
 [ -n "$MOUNT" ] && [ -d "$MOUNT/$APP_NAME.app" ] || die "The disk image did not contain $APP_NAME.app."
 
+# Asked of the app on the disk image, before the installed copy is touched. Gatekeeper's verdict is
+# the one that matters — it is what every user's Mac will give — and a build it refuses is either
+# not notarized (the releases made before this project had an Apple account are not) or tampered
+# with, and neither is worth replacing a working app for.
+step "Checking with Gatekeeper"
+spctl --assess --type execute "$MOUNT/$APP_NAME.app" 2>/dev/null \
+  || die "macOS would refuse this release: it is not signed and notarized by Apple. Nothing was installed. If it is the newest release, a newer one may be on its way — try again in a few minutes."
+
 mkdir -p "$PREFIX" 2>/dev/null || true
 [ -w "$PREFIX" ] || die "$PREFIX is not writable by this account. Re-run with --prefix \"\$HOME/Applications\"."
 
@@ -242,11 +246,6 @@ fi
 hdiutil detach "$MOUNT" -quiet
 MOUNT=""
 
-# The whole reason this script exists. Without it macOS reports an ad-hoc signed download as
-# damaged and offers only "Move to Trash".
-step "Clearing the download quarantine flag"
-xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
-
 echo
 echo "✓ $APP_NAME is installed at $DEST"
 echo
@@ -257,9 +256,9 @@ echo "  On first run it asks for two permissions, and needs both:"
 echo "    Microphone      to hear you"
 echo "    Accessibility   to watch for the hotkey and paste into the focused field"
 echo
-echo "  Accessibility survives updates: releases are signed with a certificate that does not"
-echo "  change between versions, which is what macOS ties the permission to. If dictation ever"
-echo "  stops after an upgrade anyway, the Home screen has a 'Reset and ask again' button."
+echo "  Accessibility survives updates: releases are signed by the same Apple Developer ID team,"
+echo "  which is what macOS ties the permission to. If dictation ever stops after an upgrade"
+echo "  anyway, the Home screen has a 'Reset and ask again' button."
 echo
 
 if [ "$OPEN_AFTER" = true ]; then

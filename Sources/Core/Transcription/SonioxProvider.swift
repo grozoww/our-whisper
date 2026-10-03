@@ -42,11 +42,10 @@ actor SonioxProvider: TranscriptionProvider {
     /// A cloud engine has nothing to load. It is ready exactly when there is a key to use.
     var isReady: Bool { keyProvider() != nil }
 
-    func prepare(progress: (@Sendable (Double) -> Void)? = nil) async throws {
+    func prepare(progress: (@Sendable (SpeechModelProgress) -> Void)? = nil) async throws {
         guard keyProvider() != nil else {
             throw TranscriptionError.engine("Add a Soniox API key in Configuration to use the cloud model.")
         }
-        progress?(1)
     }
 
     func unload() async {}

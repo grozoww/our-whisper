@@ -150,8 +150,8 @@ private struct ModeEditor: View {
             SettingsSection(
                 title: "Model instructions",
                 subtitle: appState.onDeviceRefiner.availability.isAvailable
-                    ? "Used when \"Clean up with the on-device model\" is on in Configuration. Leave empty to skip the model for this mode."
-                    : "The on-device model is not available on this Mac, so this is not used right now. \(appState.onDeviceRefiner.availability.explanation)"
+                    ? "What Gemma 4 is told to do with this mode's transcripts. Leave empty to skip the model for this mode."
+                    : "What Gemma 4 is told to do, once it is ready. \(appState.onDeviceRefiner.availability.explanation)"
             ) {
                 TextEditor(text: $draft.instructions)
                     .font(.system(size: 12, design: .monospaced))
@@ -173,8 +173,8 @@ private struct ModeEditor: View {
             SettingsSection(
                 title: "Clipboard",
                 subtitle: modelIsAvailable
-                    ? "For handing something you copied to the app you are dictating into. Needs the on-device model, which works out where in your sentence you asked for it."
-                    : "Needs the on-device model, which is what works out where in your sentence you asked for the clipboard. \(appState.onDeviceRefiner.availability.explanation)"
+                    ? "For handing something you copied to the app you are dictating into. Gemma 4 works out where in your sentence you asked for it."
+                    : "Needs Gemma 4, which is what works out where in your sentence you asked for the clipboard. \(appState.onDeviceRefiner.availability.explanation)"
             ) {
                 toggle(
                     "Paste the clipboard where you ask for it",
@@ -245,7 +245,7 @@ private struct ModeEditor: View {
         )
     }
 
-    /// Whether the on-device model could run at all. Hardware and OS only, matching the "Model
+    /// Whether the on-device model could run at all — downloaded and loaded, matching the "Model
     /// instructions" section above — the Configuration switch is named in the prose instead,
     /// because a control that greys out from another screen reads as broken rather than as a
     /// dependency.

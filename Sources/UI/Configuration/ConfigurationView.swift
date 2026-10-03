@@ -125,12 +125,13 @@ struct ConfigurationView: View {
                 RowDivider()
                 SettingsRow(
                     symbol: "sparkles",
-                    title: "Clean up with the on-device model",
+                    title: "Clean up with Gemma 4",
                     detail: appState.onDeviceRefiner.availability.explanation
                 ) {
-                    Toggle("", isOn: $settings.settings.refinement.useOnDeviceModel)
+                    // Never disabled: this switch is what downloads and loads the model, so a
+                    // missing model is a reason to turn it on rather than a reason it cannot be.
+                    Toggle("", isOn: $settings.settings.refinement.useCleanupModel)
                         .toggleStyle(.switch)
-                        .disabled(!appState.onDeviceRefiner.availability.isAvailable)
                 }
                 RowDivider()
                 SettingsRow(
@@ -257,6 +258,17 @@ struct ConfigurationView: View {
         }
         .onChange(of: appState.settings.settings.appearance.showInDock) { _, showInDock in
             WindowPresenter.setShowsDockIcon(showInDock)
+        }
+        .onChange(of: appState.settings.settings.refinement.wantsCleanupModel) { _, wanted in
+            // Off frees the 2.8 GB the model holds in memory and keeps the file, so turning it
+            // back on is a load of a second or two rather than another download.
+            Task {
+                if wanted {
+                    await appState.onDeviceRefiner.prepare()
+                } else {
+                    await appState.onDeviceRefiner.unload()
+                }
+            }
         }
     }
 

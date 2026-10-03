@@ -54,7 +54,7 @@ enum BundleSignature {
 
     /// Whether *any* other build could ever satisfy this requirement.
     ///
-    /// An ad-hoc signature — plain `xcodebuild`, or `package.sh --unsigned` — has the requirement
+    /// An ad-hoc signature — a plain `xcodebuild` — has the requirement
     /// `cdhash H"…"`, which is one exact binary. No update can satisfy it, so a build signed that
     /// way cannot update itself into anything: the grant is lost whatever happens, and the honest
     /// answer is to refuse and point at `scripts/install.sh` rather than to install and let
