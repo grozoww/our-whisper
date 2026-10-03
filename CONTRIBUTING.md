@@ -312,7 +312,7 @@ without the Debug build noticing.
 version out of the DMG filenames. Not the first entry: GitHub does not return that list newest
 first, and reading it positionally is what had `curl | bash` installing 1.0.8 while 1.0.10 was out.
 
-It then asks Gatekeeper about the app on the disk image *before* it touches the installed copy,
+It then asks Gatekeeper about the disk image *before* it quits or touches the installed copy,
 and stops if the answer is no — a release that is not notarized, or that was tampered with, is not
 worth replacing a working app for. It does not remove the quarantine flag: on a notarized app that
 only switches the check off. Last, it compares the installed copy's signing requirement with the new

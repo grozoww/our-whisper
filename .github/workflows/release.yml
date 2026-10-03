@@ -88,6 +88,8 @@ jobs:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
         run: |
+          # A keychain left by a run that was killed would fail the next `create-keychain`.
+          security delete-keychain build.keychain 2>/dev/null || true
           KEYCHAIN_PASSWORD="$(uuidgen)"
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security default-keychain -s build.keychain
@@ -97,8 +99,8 @@ jobs:
           # found" while `security find-identity build.keychain` happily shows it.
           security list-keychains -d user -s build.keychain $(security list-keychains -d user | tr -d '"')
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          # No auto-lock timeout: the default is 300 seconds of idle, and a notarized build waits
-          # on Apple for longer than that. A keychain that relocks mid-run fails the DMG signature
+          # An hour before it locks again, not the default 300 seconds of idle: a notarized build
+          # waits on Apple for longer than that. A keychain that relocks mid-run fails the DMG signature
           # after the app has already been built.
           security set-keychain-settings -t 3600 -u build.keychain
           echo "$CSC_LINK" | base64 --decode > "$RUNNER_TEMP/cert.p12"
@@ -148,6 +150,16 @@ jobs:
       # the result. Any of those failing fails the job, and with it the release.
       - name: Package, sign and notarize
         run: ./scripts/package.sh
+
+      # Nothing after this needs the key or the certificate, and the next step runs a third-party
+      # action from a mutable tag. With the keychain unlocked and codesign allowed to use the key,
+      # anything running on the runner could sign and notarize as the team, so they are gone before
+      # it starts. The last step stays as the net for a run that fails before getting here.
+      - name: Remove the signing key and the certificate
+        if: always()
+        run: |
+          security delete-keychain build.keychain || true
+          rm -f "$RUNNER_TEMP/AuthKey.p8"
 
       # The checks above ran on the file this job is about to upload. This looks at it once more,
       # from the disk image itself: an asset catalog that failed to compile leaves the app with no

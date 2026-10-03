@@ -116,6 +116,9 @@ final class OnDeviceRefiner {
                     }
                 }
             }
+            // Hashing the download does not notice a cancellation, so a switch turned off during it
+            // is only seen here — before 2.8 GB is mapped for nothing.
+            try Task.checkCancellation()
             availability = .loading
             try await engine.load(from: file)
             // The load is a C call and cannot be interrupted, so a switch turned off while it ran is
@@ -128,6 +131,8 @@ final class OnDeviceRefiner {
             // A cancelled download surfaces as `URLError.cancelled` as often as `CancellationError`,
             // and either way it is the user's decision rather than a failure to show them.
             if Task.isCancelled {
+                // The load may have finished after `unload()` emptied the engine, so empty it again.
+                await engine.unload()
                 availability = FileManager.default.fileExists(atPath: file.path(percentEncoded: false)) ? .downloaded : .notDownloaded
                 return
             }

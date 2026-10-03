@@ -39,7 +39,7 @@ actor ParakeetProvider: TranscriptionProvider {
         let task = Task { try await self.load(progress: progress) }
         preparation = task
         // Cleared on failure too, so the next attempt retries instead of awaiting a failure for ever.
-        defer { preparation = nil }
+        defer { if preparation == task { preparation = nil } }
         try await task.value
     }
 

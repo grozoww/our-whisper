@@ -184,6 +184,10 @@ final class AppState {
         if settings.settings.refinement.wantsCleanupModel {
             Task {
                 await dictation.launchPreparation?.value
+                // Asked again: the speech model can take minutes on a first launch, and someone who
+                // reads "2.8 GB" in that time and switches the model off must not have it fetched
+                // anyway when the wait ends. Their switch had nothing to cancel yet.
+                guard settings.settings.refinement.wantsCleanupModel else { return }
                 await onDeviceRefiner.prepare()
             }
         }

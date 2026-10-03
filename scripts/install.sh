@@ -182,6 +182,24 @@ fi
 
 DEST="$PREFIX/$APP_NAME.app"
 
+step "Mounting $DMG_FILE"
+MOUNT="$(hdiutil attach "$WORK/$DMG_FILE" -nobrowse -readonly -mountrandom /tmp \
+  | grep -o '/tmp/[^[:space:]]*$' | tail -1 || true)"
+[ -n "$MOUNT" ] && [ -d "$MOUNT/$APP_NAME.app" ] || die "The disk image did not contain $APP_NAME.app."
+
+# Asked of the disk image, and before anything is quit or replaced. Gatekeeper's verdict is the one
+# that matters — it is what every user's Mac will give — and a release it refuses is either not
+# notarized (the ones made before this project had an Apple account are not) or tampered with,
+# and neither is worth interrupting a working dictation for. The image rather than the app inside
+# it: the ticket is stapled to the image, so this answers without a network, and a notarized image
+# is Apple vouching for what is in it.
+step "Checking with Gatekeeper"
+spctl --assess --type open --context context:primary-signature "$WORK/$DMG_FILE" 2>/dev/null \
+  || die "macOS would refuse this release: it is not signed and notarized by Apple. Nothing was installed. If it is the newest release, a newer one may be on its way — try again in a few minutes."
+
+mkdir -p "$PREFIX" 2>/dev/null || true
+[ -w "$PREFIX" ] || die "$PREFIX is not writable by this account. Re-run with --prefix \"\$HOME/Applications\"."
+
 if pgrep -x "$APP_NAME" >/dev/null 2>&1; then
   step "Quitting the running copy"
   osascript -e "tell application \"$APP_NAME\" to quit" >/dev/null 2>&1 || true
@@ -191,22 +209,6 @@ if pgrep -x "$APP_NAME" >/dev/null 2>&1; then
   done
   pgrep -x "$APP_NAME" >/dev/null 2>&1 && die "$APP_NAME is still running. Quit it from the menu bar and run this again."
 fi
-
-step "Mounting $DMG_FILE"
-MOUNT="$(hdiutil attach "$WORK/$DMG_FILE" -nobrowse -readonly -mountrandom /tmp \
-  | grep -o '/tmp/[^[:space:]]*$' | tail -1 || true)"
-[ -n "$MOUNT" ] && [ -d "$MOUNT/$APP_NAME.app" ] || die "The disk image did not contain $APP_NAME.app."
-
-# Asked of the app on the disk image, before the installed copy is touched. Gatekeeper's verdict is
-# the one that matters — it is what every user's Mac will give — and a build it refuses is either
-# not notarized (the releases made before this project had an Apple account are not) or tampered
-# with, and neither is worth replacing a working app for.
-step "Checking with Gatekeeper"
-spctl --assess --type execute "$MOUNT/$APP_NAME.app" 2>/dev/null \
-  || die "macOS would refuse this release: it is not signed and notarized by Apple. Nothing was installed. If it is the newest release, a newer one may be on its way — try again in a few minutes."
-
-mkdir -p "$PREFIX" 2>/dev/null || true
-[ -w "$PREFIX" ] || die "$PREFIX is not writable by this account. Re-run with --prefix \"\$HOME/Applications\"."
 
 # MARK: - Accessibility
 #

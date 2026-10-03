@@ -660,8 +660,9 @@ uses) before it builds anything. There used to be two more tiers under that, sel
 ad-hoc, for the years there was no Apple account. Each was a way for a release to go out looking
 finished and be wrong: ad-hoc broke Accessibility on every update, and self-signed could not be
 notarized, so every download needed `xattr -dr` and install.sh existed to do it. Both are gone, and
-so is the quarantine step — `install.sh` now asks Gatekeeper about the app on the disk image
-*before* it replaces the installed copy, and stops if the answer is no.
+so is the quarantine step — `install.sh` now asks Gatekeeper about the disk image
+(the notarization ticket is stapled to it, so it answers offline) *before* it quits or replaces the
+installed copy, and stops if the answer is no.
 
 The same mistake one level up is what broke the update check: every release was marked a
 prerelease because none was notarized, `/releases/latest` skips prereleases, and the app read the

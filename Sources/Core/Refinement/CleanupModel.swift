@@ -70,7 +70,11 @@ struct CleanupModel: Sendable, Equatable {
 
         do {
             let total = bytes
-            let response = try await http.download(UpdateChecker.anonymousRequest(url), to: partial) { written in
+            // The update check's request gives up after 15 seconds of silence, which suits a JSON
+            // answer and not a 2.8 GB file: one CDN stall would throw away the whole download.
+            var request = UpdateChecker.anonymousRequest(url)
+            request.timeoutInterval = 120
+            let response = try await http.download(request, to: partial) { written in
                 progress(min(1, Double(written) / Double(total)))
             }
             guard (200..<300).contains(response.statusCode) else { throw Failure.server(response.statusCode) }
