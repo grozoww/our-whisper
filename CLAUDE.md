@@ -655,8 +655,7 @@ requires a `detail` for that reason.
 **Anything users download.** `scripts/package.sh` builds the DMG and `scripts/install.sh` is the
 `curl | bash` that installs it. Every release is signed with the project's Developer ID and
 notarized, or CI fails: `release.yml` checks its five secrets (`CSC_LINK`, `CSC_KEY_PASSWORD`,
-`APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER` — the names the interview-helper project
-uses) before it builds anything. There used to be two more tiers under that, self-signed and
+`APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`) before it builds anything. There used to be two more tiers under that, self-signed and
 ad-hoc, for the years there was no Apple account. Each was a way for a release to go out looking
 finished and be wrong: ad-hoc broke Accessibility on every update, and self-signed could not be
 notarized, so every download needed `xattr -dr` and install.sh existed to do it. Both are gone, and

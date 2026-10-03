@@ -208,8 +208,7 @@ launch with "different Team IDs", even when the framework was signed with the ve
 `package.sh` signs the framework first and the app last, never with `--deep`, and then launches
 the result once, because that crash is the one thing `codesign --verify` cannot see.
 
-**Secrets.** The release workflow reads five repository secrets. The names are the ones
-`interview-helper-electron` uses, so they can be made once:
+**Secrets.** The release workflow reads five repository secrets:
 
 | Secret | What it is |
 | --- | --- |

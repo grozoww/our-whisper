@@ -64,8 +64,7 @@ jobs:
       #   APPLE_API_KEY_ID  its Key ID
       #   APPLE_API_ISSUER  the Issuer ID of the team that made it
       #
-      # The names are the ones the interview-helper project already uses, so the same five can be
-      # made once. CONTRIBUTING.md says where each comes from.
+      # CONTRIBUTING.md says where each comes from.
       - name: Check the signing secrets are present
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
