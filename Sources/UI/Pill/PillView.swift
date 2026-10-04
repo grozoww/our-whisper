@@ -115,23 +115,33 @@ struct PillView: View {
 ///
 /// The chosen mode is named once, in the corner, rather than every chip carrying a label: eight
 /// labels do not fit in a pill this size, and an icon the person has chosen themselves is what they
-/// look for. The name is the one thing a colour and a glyph cannot say.
+/// look for. The name is the one thing a colour and a glyph cannot say — so pointing at a chip puts
+/// that chip's name in the corner, and the corner goes back to the chosen mode when the pointer
+/// leaves. Eight glyphs are not all readable at a glance, and a click is the wrong way to find out.
 private struct ModePicker: View {
     let model: PillModel
+
+    @State private var hoveredID: UUID?
+
+    /// What the corner names: the chip under the pointer, else the one in use.
+    private var named: PillModeOption? {
+        model.modeOptions.first { $0.id == hoveredID }
+            ?? model.modeOptions.first { $0.id == model.selectedModeID }
+    }
 
     var body: some View {
         VStack(spacing: 12) {
             HStack(spacing: 10) {
                 AudioBars(values: model.bars)
                 Spacer(minLength: 12)
-                if let chosen = model.modeOptions.first(where: { $0.id == model.selectedModeID }) {
+                if let named {
                     HStack(spacing: 6) {
-                        Image(systemName: chosen.symbol)
-                        Text(chosen.name).lineLimit(1)
+                        Image(systemName: named.symbol)
+                        Text(named.name).lineLimit(1)
                     }
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.white)
-                    .id(chosen.id)
+                    .id(named.id)
                     .transition(.blurReplace)
                 }
             }
@@ -141,7 +151,11 @@ private struct ModePicker: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 10) {
                         ForEach(model.modeOptions) { option in
-                            ModeChip(option: option, isSelected: option.id == model.selectedModeID) {
+                            ModeChip(
+                                option: option,
+                                isSelected: option.id == model.selectedModeID,
+                                onHover: { hover(option.id, $0) }
+                            ) {
                                 model.selectedModeID = option.id
                                 model.onSelectMode?(option.id)
                             }
@@ -162,7 +176,18 @@ private struct ModePicker: View {
             }
         }
         .padding(.vertical, 14)
-        .animation(.snappy(duration: 0.2), value: model.selectedModeID)
+        .animation(.snappy(duration: 0.2), value: named?.id)
+    }
+
+    /// Leaving one chip and entering the next can arrive in either order, so only the chip that is
+    /// still hovered may clear it — otherwise the corner would go back to the chosen mode for a
+    /// frame between two chips.
+    private func hover(_ id: UUID, _ isInside: Bool) {
+        if isInside {
+            hoveredID = id
+        } else if hoveredID == id {
+            hoveredID = nil
+        }
     }
 }
 
@@ -170,6 +195,7 @@ private struct ModePicker: View {
 private struct ModeChip: View {
     let option: PillModeOption
     let isSelected: Bool
+    let onHover: (Bool) -> Void
     let action: () -> Void
 
     private static let size: CGFloat = 34
@@ -186,6 +212,7 @@ private struct ModeChip: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover(perform: onHover)
         .accessibilityLabel(option.name)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }

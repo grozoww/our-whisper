@@ -719,6 +719,11 @@ that are not obvious:
   click before it. Measured with real clicks (`CGEvent` posted by a tiny Swift binary, which needs
   nothing but the Accessibility the terminal already has) and by asking System Events which app was
   frontmost afterwards: it was not OurWhisper. Python has no Quartz here; a Swift one-liner does.
+- **Pointing at a chip names it in the corner, and the corner goes back to the chosen mode when the
+  pointer leaves.** The icons are the only label a chip has, and eight of them are not all readable
+  at a glance. `.onHover` fires in this panel although it is never key — measured with a `CGEvent`
+  mouse move and a photograph per position, not assumed. Leaving a chip and entering the next can
+  arrive in either order, so `ModePicker.hover` clears only for the chip that is still hovered.
 - **The open pill is one view and the closed pill is the other, cross-faded with `.blurReplace`, and
   the content is clipped to the capsule.** Without the clip the picker, laid out at full size from
   the first frame, shows outside the still-small capsule as blurred icons floating above it.
