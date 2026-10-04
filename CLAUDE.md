@@ -682,6 +682,56 @@ list, so the check would rebuild the panel every time. Not measured: a full-scre
 "Displays have separate Spaces" with two displays. If `isOnActiveSpace` is false for a healthy
 window there, the log line `Pill window was left on another desktop` appears on every dictation.
 
+**The pill can open into a mode picker, and a window that grows is the wrong thing to animate.** With
+"Pill style: With modes" the capsule appears as it always did and, 320 ms later, opens into a larger
+window with the level bars, the chosen mode's name and every mode as an icon to click. Things in it
+that are not obvious:
+
+- **The window is as big as the open pill for the whole of a dictation that has a picker**
+  (`PillView.openWidth/openHeight` plus the shadow margin), with the capsule at its bottom edge, so
+  the pill appears exactly where it always did. What opens is the capsule *inside* it. A window that
+  grew with the animation has to be resized from outside SwiftUI in step with it, and the two never
+  quite agree; a window that is already big has nothing to resize. The transparent part is only
+  ever the margin, because the capsule fills the window while it is open — and while it is small
+  the window takes no clicks, so the empty space above a small pill is not in the way of the app
+  underneath. `PillWindowController.takesClicks` is what a test asks.
+- **Clicks reach it and focus does not.** `ignoresMouseEvents` is false only while the picker is open
+  and goes back to true in `setPhase` the moment recording stops. The pill is still a
+  `nonactivatingPanel` that cannot become key, and the first click on a chip works with no activating
+  click before it. Measured with real clicks (`CGEvent` posted by a tiny Swift binary, which needs
+  nothing but the Accessibility the terminal already has) and by asking System Events which app was
+  frontmost afterwards: it was not OurWhisper. Python has no Quartz here; a Swift one-liner does.
+- **The open pill is one view and the closed pill is the other, cross-faded with `.blurReplace`, and
+  the content is clipped to the capsule.** Without the clip the picker, laid out at full size from
+  the first frame, shows outside the still-small capsule as blurred icons floating above it.
+  The width has to be a *number* on both sides to animate: `listeningWidth` is the 108 the listening
+  capsule always was, and every other phase is as wide as its label, which SwiftUI cannot
+  interpolate from and which snaps as before. Look at it with `OURWHISPER_SCREENSHOT=pill.opening`,
+  which reports ready at once and leaves the opening to run; capture frames as fast as
+  `screencapture -l` goes.
+- **A mode clicked in the pill is for this dictation only** (`DictationController.modeOverride`). It is
+  not written to the settings and does not turn "Switch by app" off — the menu bar's choice does both,
+  and doing that from a click in a pill would switch off something the person set up. The chosen mode
+  beats the app's and the saved one for the one dictation, then it is gone.
+- **The clipboard follows the mode that was clicked.** It is read, or not, when recording starts, for
+  the mode the app would have picked. Clicking an assistant — the case that matters, since it works
+  on what you copied — reads it then, which is as good as reading it at the start because nothing
+  writes to the clipboard until the paste; clicking a mode that does not use it drops it, which
+  keeps the claim that it is read only for a mode that uses it (`needsClipboard`).
+- **A label in the pill takes its natural width.** The window is fitted to the label, and a label then
+  squeezed to what the window turned out to be lost its last letters: "Pasted into Slack" came out as
+  "Pasted into Sla…", in the old build as well. The success text is `fixedSize` for that reason.
+- **Small is the default and the setting is `AppearanceSettings.pillStyle`.** The pill is on screen for
+  every dictation of everyone; a bigger one that appears unasked would be a change to the thing
+  everybody sees.
+
+**The Modes list is reorderable, and the order is the order of the file.** Drag a row (`onMove` on the
+`ForEach`, `ModeStore.move`). The array is the one order the Modes list, the menu bar, Configuration
+and the pill's picker all read. Reordering made "the first mode" a bad fallback — drag Raw to the top
+and "I have not chosen a mode" would paste the transcript untouched — so `resolve` falls back to General
+by id. Tested with a real mouse drag the same way as the pill's clicks; a drop exactly on a row
+boundary can be a no-op, which looks like the drag not working.
+
 **A new dictation cannot start while the last is still being processed.** `isRecording` goes false
 when recording stops, so without a guard another dictation could begin during transcription or
 cleanup — ten seconds when the on-device model times out. Both then shared one `TextInjector`: the
@@ -958,7 +1008,7 @@ anything depending on `mlx-swift` 0.31.5+ needs Xcode's separately-downloaded Me
 
 ## Testing
 
-Swift Testing, not XCTest. 354 tests, no network, no API key, no microphone, no permissions.
+Swift Testing, not XCTest. 380 tests, no network, no API key, no microphone, no permissions.
 
 - Cloud providers are tested against `StubHTTPClient` with recorded response shapes.
 - Every screen is built and laid out in `ViewRenderingTests` — a view that crashes on

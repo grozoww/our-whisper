@@ -228,6 +228,21 @@ struct ConfigurationView: View {
                 }
                 RowDivider()
                 SettingsRow(
+                    symbol: "rectangle.and.hand.point.up.left",
+                    title: "Pill style",
+                    detail: "Small is the capsule with the level bars. With modes, the capsule opens into a larger window while you speak, with every mode in it — click one to use it for this dictation only."
+                ) {
+                    Picker("Pill style", selection: $settings.settings.appearance.pillStyle) {
+                        ForEach(PillStyle.allCases) { style in
+                            Text(style.title).tag(style)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 190)
+                    .disabled(!settings.settings.appearance.showPill)
+                }
+                RowDivider()
+                SettingsRow(
                     symbol: "dock.rectangle",
                     title: "Show in the Dock",
                     detail: "OurWhisper is a menu bar app, so by default it has no Dock icon and does not appear in command-tab. Turn this on if you would rather find it the ordinary way."

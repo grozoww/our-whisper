@@ -66,7 +66,10 @@ the optional cloud provider instead.
 - **Modes** — per-profile prompts that clean up the raw transcript: drop `mm` and `hmm`, resolve
   self-corrections ("send it Tuesday, no, Wednesday" becomes "send it Wednesday"), set the tone.
   Modes can auto-switch based on the app you are typing into.
-- **Menu bar app** with a floating pill overlay and live audio bars while recording.
+- **Menu bar app** with a floating pill overlay and live audio bars while recording. Set the pill
+  to *With modes* and it opens, a moment after it appears, into a larger window with every mode as
+  an icon: click one to use it for this dictation only. Drag modes in the Modes list to put them in
+  the order you want; the menu bar and the pill follow it.
 - **Clipboard as context** — off by default, per mode. When it is on, whatever you have copied is
   shown to the on-device model as reference for spelling names and terms. It is never pasted, and
   a password copied from a password manager is skipped.

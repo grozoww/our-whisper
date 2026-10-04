@@ -11,30 +11,71 @@ struct PillView: View {
     /// radius plus the downward offset.
     static let shadowMargin: CGFloat = 24
 
+    /// The open pill. Wide enough for eight mode chips without scrolling, which is more than the
+    /// shipped six and enough for most people's own; past that the strip scrolls.
+    static let openWidth: CGFloat = 360
+    static let openHeight: CGFloat = 104
+
+    /// What the capsule is while listening, as a number. The width has to be a number on both
+    /// sides of the animation to grow from one to the other; every other phase is as wide as its
+    /// label, which SwiftUI cannot interpolate from, and those snap as they always did.
+    static let listeningWidth: CGFloat = 108
+
+    private static let openCorner: CGFloat = 28
+    private static let closedCorner: CGFloat = 22
+
     var body: some View {
+        let isOpen = model.isOpen
+        let corner = isOpen ? Self.openCorner : Self.closedCorner
+
         HStack(spacing: 10) {
-            content
+            if isOpen {
+                ModePicker(model: model)
+                    .transition(.blurReplace)
+            } else {
+                content
+                    .padding(.horizontal, 18)
+                    .transition(.blurReplace)
+            }
         }
-        .padding(.horizontal, 18)
-        .frame(height: 44)
-        .frame(minWidth: 108)
+        .frame(width: surfaceWidth(isOpen: isOpen), height: isOpen ? Self.openHeight : 44)
+        .frame(minWidth: Self.listeningWidth)
+        // The picker is laid out at its full size from the first frame, so while the capsule is
+        // still small it would be drawn outside it, as blurred icons floating above the pill. The
+        // clip follows the capsule as it grows, which is what makes it read as opening.
+        .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
         .background {
             ZStack {
-                Capsule(style: .continuous)
+                RoundedRectangle(cornerRadius: corner, style: .continuous)
                     .fill(.black.opacity(0.82))
                 if model.phase.isProcessing {
                     // Clipped rather than masked so the sweep stops at the fill and leaves the
                     // border below to draw the edge at full strength.
                     ProcessingSweep()
-                        .clipShape(Capsule(style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
                 }
-                Capsule(style: .continuous)
+                RoundedRectangle(cornerRadius: corner, style: .continuous)
                     .strokeBorder(.white.opacity(model.phase.isProcessing ? 0.22 : 0.12), lineWidth: 1)
             }
         }
         .shadow(color: .black.opacity(0.35), radius: 14, y: 5)
         .padding(Self.shadowMargin)
+        // The window is as big as the open pill for the whole of a dictation that has a picker,
+        // and the capsule sits at its bottom edge. A window that grew with the animation would
+        // have to be resized in step with it from outside SwiftUI, and the two never quite agree;
+        // a window that is already big has nothing to resize, and its empty part is transparent.
+        .frame(
+            width: model.hasPicker ? Self.openWidth + Self.shadowMargin * 2 : nil,
+            height: model.hasPicker ? Self.openHeight + Self.shadowMargin * 2 : nil,
+            alignment: .bottom
+        )
         .animation(.smooth(duration: 0.18), value: model.phase)
+        .animation(.spring(response: 0.46, dampingFraction: 0.82), value: isOpen)
+    }
+
+    private func surfaceWidth(isOpen: Bool) -> CGFloat? {
+        if isOpen { return Self.openWidth }
+        return model.hasPicker && model.phase == .listening ? Self.listeningWidth : nil
     }
 
     @ViewBuilder
@@ -51,7 +92,9 @@ struct PillView: View {
         case .success(let target):
             HStack(spacing: 7) {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                Text(target).lineLimit(1)
+                // Its natural width. The window is fitted to the label and a label that is then
+                // squeezed to what the window turned out to be loses its last letters.
+                Text(target).lineLimit(1).fixedSize(horizontal: true, vertical: false)
             }
             .font(.system(size: 13, weight: .medium))
             .foregroundStyle(.white)
@@ -64,6 +107,87 @@ struct PillView: View {
             .foregroundStyle(.white)
             .frame(maxWidth: 320)
         }
+    }
+}
+
+/// The inside of the open pill: the level bars you already had, which mode is chosen, and every
+/// mode as an icon to click.
+///
+/// The chosen mode is named once, in the corner, rather than every chip carrying a label: eight
+/// labels do not fit in a pill this size, and an icon the person has chosen themselves is what they
+/// look for. The name is the one thing a colour and a glyph cannot say.
+private struct ModePicker: View {
+    let model: PillModel
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 10) {
+                AudioBars(values: model.bars)
+                Spacer(minLength: 12)
+                if let chosen = model.modeOptions.first(where: { $0.id == model.selectedModeID }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: chosen.symbol)
+                        Text(chosen.name).lineLimit(1)
+                    }
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.white)
+                    .id(chosen.id)
+                    .transition(.blurReplace)
+                }
+            }
+            .padding(.horizontal, 22)
+
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(model.modeOptions) { option in
+                            ModeChip(option: option, isSelected: option.id == model.selectedModeID) {
+                                model.selectedModeID = option.id
+                                model.onSelectMode?(option.id)
+                            }
+                            .id(option.id)
+                        }
+                    }
+                    // Centred while it fits, and the whole strip when it does not: the content is
+                    // at least as wide as the pill, so a few modes sit in the middle.
+                    .frame(minWidth: PillView.openWidth, alignment: .center)
+                }
+                .onChange(of: model.selectedModeID) { _, id in
+                    guard let id else { return }
+                    withAnimation(.snappy) { proxy.scrollTo(id, anchor: .center) }
+                }
+                .onAppear {
+                    if let id = model.selectedModeID { proxy.scrollTo(id, anchor: .center) }
+                }
+            }
+        }
+        .padding(.vertical, 14)
+        .animation(.snappy(duration: 0.2), value: model.selectedModeID)
+    }
+}
+
+/// One mode: its own icon, the way it looks in the Modes list, ringed when it is the one in use.
+private struct ModeChip: View {
+    let option: PillModeOption
+    let isSelected: Bool
+    let action: () -> Void
+
+    private static let size: CGFloat = 34
+
+    var body: some View {
+        Button(action: action) {
+            SectionIcon(symbol: option.symbol, tint: option.tint.color, size: Self.size)
+                .padding(3)
+                .overlay {
+                    RoundedRectangle(cornerRadius: Self.size * 0.28 + 3, style: .continuous)
+                        .strokeBorder(.white, lineWidth: isSelected ? 2 : 0)
+                }
+                .opacity(isSelected ? 1 : 0.7)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(option.name)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 

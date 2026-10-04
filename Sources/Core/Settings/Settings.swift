@@ -111,11 +111,33 @@ struct HistorySettings: Codable, Equatable, Sendable {
     var keepAudio: Bool = false
 }
 
+/// What the recording overlay is while you speak.
+enum PillStyle: String, Codable, CaseIterable, Identifiable, Sendable {
+    /// The small capsule with the level bars. What the pill always was.
+    case compact
+    /// The capsule, which then opens into a larger window with the modes in it, so the mode for this
+    /// dictation can be picked without leaving the app you are dictating into.
+    case withModes
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .compact: "Small"
+        case .withModes: "With modes"
+        }
+    }
+}
+
 struct AppearanceSettings: Codable, Equatable, Sendable {
     var theme: Theme = .system
     var accent: AccentTint = .orange
     /// Hide the pill entirely for people who find it distracting. The menu bar glyph still moves.
     var showPill: Bool = true
+    /// Small by default: the pill is on screen for every dictation, and a larger one that appears
+    /// without being asked for would be a change to something everyone sees. A new field on a
+    /// persisted type, so it is in `init(from:)` below.
+    var pillStyle: PillStyle = .compact
     /// Off by default: this is a menu bar app, and a Dock icon for something you drive entirely
     /// with a hotkey is clutter. On for people who want to find it the ordinary way.
     var showInDock: Bool = false
@@ -194,6 +216,7 @@ extension AppearanceSettings {
         theme = container.value(.theme, or: defaults.theme)
         accent = container.value(.accent, or: defaults.accent)
         showPill = container.value(.showPill, or: defaults.showPill)
+        pillStyle = container.value(.pillStyle, or: defaults.pillStyle)
         showInDock = container.value(.showInDock, or: defaults.showInDock)
     }
 }

@@ -27,8 +27,12 @@ final class ModeStore {
     /// The mode to use for one dictation.
     ///
     /// App matching wins over the saved selection when auto-switch is on — that is the entire
-    /// point of it. Everything falls back to the first mode rather than to nothing, because a
-    /// dictation must never fail for want of a mode.
+    /// point of it. Everything falls back to General rather than to nothing, because a dictation
+    /// must never fail for want of a mode.
+    ///
+    /// General by id, not "the first mode". The list can be reordered, and a fallback that is
+    /// whichever mode was dragged to the top turns "I have not chosen one" into Raw, which
+    /// pastes the transcript exactly as the speech model wrote it.
     func resolve(settings: RefinementSettings, frontmostBundleID: String?) -> Mode {
         if settings.autoSwitchByApp, let match = modes.first(where: { $0.claims(bundleID: frontmostBundleID) }) {
             return match
@@ -36,7 +40,7 @@ final class ModeStore {
         if let id = settings.activeModeID, let chosen = modes.first(where: { $0.id == id }) {
             return chosen
         }
-        return modes.first ?? Mode.builtIns[0]
+        return modes.first { $0.id == Mode.builtIns[0].id } ?? modes.first ?? Mode.builtIns[0]
     }
 
     /// Whether anything would use the clipboard if it were read — as reference for the model, or
@@ -103,6 +107,25 @@ final class ModeStore {
     func delete(_ id: UUID) {
         guard let index = modes.firstIndex(where: { $0.id == id }), !modes[index].isBuiltIn else { return }
         modes.remove(at: index)
+        save()
+    }
+
+    /// Reorders the list the way `List.onMove` reports it: these rows, to in front of this offset.
+    ///
+    /// The order is the order of the array, which is the order of the file, the Modes list, the
+    /// menu bar, Configuration and the pill's picker — one source, so a mode dragged up here is up
+    /// everywhere. Written by hand instead of `Array.move(fromOffsets:toOffset:)` because that is
+    /// SwiftUI's, and this is not a UI type.
+    func move(fromOffsets source: IndexSet, toOffset destination: Int) {
+        let moving = source.map { modes[$0] }
+        // Rows taken out from in front of the destination shift it up by that many.
+        let shift = source.filter { $0 < destination }.count
+        var rest = modes
+        for index in source.sorted(by: >) { rest.remove(at: index) }
+        rest.insert(contentsOf: moving, at: destination - shift)
+
+        guard rest != modes else { return }
+        modes = rest
         save()
     }
 

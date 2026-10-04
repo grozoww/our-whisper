@@ -25,6 +25,14 @@ final class PillWindowController {
     /// The timer started by `dismiss(after:)`, kept so the next `show()` can call it off.
     private var dismissal: Task<Void, Never>?
 
+    /// The wait before the pill opens into the mode picker, kept so stopping first can cancel it.
+    private var expansion: Task<Void, Never>?
+
+    /// How long the small pill is up before it opens. Long enough to read as the pill appearing
+    /// and *then* growing, which is the effect; short enough that someone choosing a mode is not
+    /// waiting on it. A dictation that ends first never sees it open.
+    static let expansionDelay = Duration.milliseconds(320)
+
     private let log = Logger(subsystem: "com.grozoww.ourwhisper", category: "pill")
 
     var pillModel: PillModel { model }
@@ -61,8 +69,12 @@ final class PillWindowController {
         // talking within 0.7 s of a paste, or 2.5 s of "Nothing was said", and the pill vanished
         // for the whole of the new dictation.
         dismissal?.cancel()
+        expansion?.cancel()
         model.reset()
         let panel = panelOnThisDesktop()
+        // A pill does not take clicks. The one with a picker asks for them in `offerModes`, once it
+        // is open, and gives them back the moment it closes.
+        panel.ignoresMouseEvents = true
         // Chosen once, here, rather than on every re-fit: the pill belongs on the screen the user
         // started dictating on, and re-reading it would make it hop displays mid-sentence.
         displayID = Self.identifier(of: Self.screen(showing: processIdentifier))
@@ -81,11 +93,57 @@ final class PillWindowController {
     /// every call site has to remember.
     func setPhase(_ phase: PillModel.Phase) {
         model.phase = phase
+        if phase != .listening { closePicker() }
         guard let panel else { return }
         reposition(panel)
     }
 
+    /// Gives this dictation's pill a mode picker, and opens it a moment from now.
+    ///
+    /// Called after `show()`, which clears the picker — a pill that is only a message has none.
+    /// The window is made as big as the open pill from here on, so what opens is the capsule
+    /// inside it and the window itself never has to be animated.
+    ///
+    /// Returns the wait before it opens, so a test can wait on that and not on a fixed time.
+    @discardableResult
+    func offerModes(
+        _ options: [PillModeOption],
+        selected: UUID?,
+        onSelect: @escaping (UUID) -> Void
+    ) -> Task<Void, Never> {
+        model.modeOptions = options
+        model.selectedModeID = selected
+        model.onSelectMode = onSelect
+        if let panel { reposition(panel) }
+
+        expansion?.cancel()
+        let opening = Task { [weak self] in
+            try? await Task.sleep(for: Self.expansionDelay)
+            guard !Task.isCancelled, let self, self.model.phase == .listening, self.model.hasPicker else { return }
+            self.model.isExpanded = true
+            // Only now does the window take clicks, and only for as long as it is open.
+            self.panel?.ignoresMouseEvents = false
+        }
+        expansion = opening
+        return opening
+    }
+
+    /// Whether the pill is taking clicks. Only the open picker does.
+    var takesClicks: Bool { panel.map { !$0.ignoresMouseEvents } ?? false }
+
+    /// Moves the ring to another mode, without announcing it back to whoever is listening.
+    func selectMode(_ id: UUID?) {
+        model.selectedModeID = id
+    }
+
+    private func closePicker() {
+        expansion?.cancel()
+        model.isExpanded = false
+        panel?.ignoresMouseEvents = true
+    }
+
     func hide() {
+        closePicker()
         panel?.orderOut(nil)
     }
 

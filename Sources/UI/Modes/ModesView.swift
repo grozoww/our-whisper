@@ -30,26 +30,33 @@ struct ModesView: View {
 
     private var list: some View {
         VStack(spacing: 0) {
-            List(appState.modes.modes, selection: $selection) { mode in
-                // Explicit HStack for the same reason as the main sidebar: `Label`'s icon lands
-                // in the list's icon gutter, which the sidebar style clips.
-                HStack(spacing: 8) {
-                    SectionIcon(symbol: mode.symbol, tint: mode.tint.color, size: 22)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(mode.name).font(.system(size: 13, weight: .medium))
-                        if mode.kind == .assistant {
-                            Text("Assistant")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                        } else if !mode.appBundleIDs.isEmpty {
-                            Text("\(mode.appBundleIDs.count) app\(mode.appBundleIDs.count == 1 ? "" : "s")")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
+            List(selection: $selection) {
+                ForEach(appState.modes.modes) { mode in
+                    // Explicit HStack for the same reason as the main sidebar: `Label`'s icon lands
+                    // in the list's icon gutter, which the sidebar style clips.
+                    HStack(spacing: 8) {
+                        SectionIcon(symbol: mode.symbol, tint: mode.tint.color, size: 22)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(mode.name).font(.system(size: 13, weight: .medium))
+                            if mode.kind == .assistant {
+                                Text("Assistant")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            } else if !mode.appBundleIDs.isEmpty {
+                                Text("\(mode.appBundleIDs.count) app\(mode.appBundleIDs.count == 1 ? "" : "s")")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
                         }
+                        Spacer(minLength: 0)
                     }
-                    Spacer(minLength: 0)
+                    .tag(mode.id)
                 }
-                .tag(mode.id)
+                // Drag a row to reorder. The order is shared with the menu bar, Configuration and
+                // the pill's mode picker.
+                .onMove { source, destination in
+                    appState.modes.move(fromOffsets: source, toOffset: destination)
+                }
             }
             .listStyle(.sidebar)
 
@@ -77,6 +84,10 @@ struct ModesView: View {
                 .disabled(selectedMode.map(\.isBuiltIn) ?? true)
 
                 Spacer()
+
+                Text("Drag to reorder")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
             }
             .buttonStyle(.borderless)
             // Roomier than a plain 8 on purpose. With the sidebar collapsed this list is the
