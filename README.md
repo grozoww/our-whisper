@@ -165,8 +165,8 @@ Building from source is documented in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 - Audio and transcripts stay on disk, under your control, with a retention setting.
 - No telemetry. No crash reporting. The only requests the app makes on its own go to the public
-  GitHub releases page, and none of them carries anything about you or this Mac: the update check,
-  which you can turn off in Configuration, and — only when you press **Update and restart** — the
+  GitHub releases page, and none of them carries anything about you or this Mac: the update check
+  — at launch and once a day after — which you can turn off in Configuration, and — only when you press **Update and restart** — the
   release's disk image and its checksums. Everything else needs a cloud provider you enabled.
 - API keys you paste are stored in the **macOS Keychain**, never in a config file or a log, and
   are only ever sent to that provider.

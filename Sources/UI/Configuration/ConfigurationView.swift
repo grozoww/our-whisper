@@ -259,6 +259,13 @@ struct ConfigurationView: View {
         .onChange(of: appState.settings.settings.appearance.showInDock) { _, showInDock in
             WindowPresenter.setShowsDockIcon(showInDock)
         }
+        // Here and not on the switch: Reset can turn it back on too, and the Updates section is
+        // in a lazy stack, so it may not exist yet when that happens. Switching *on* asks now,
+        // because the loop in `AppState.watchForUpdates` would otherwise take up to a day.
+        .onChange(of: appState.settings.settings.updates.checkAutomatically) { _, isOn in
+            guard isOn, appState.availableUpdate == nil else { return }
+            Task { await appState.checkForUpdate() }
+        }
         .onChange(of: appState.settings.settings.refinement.wantsCleanupModel) { _, wanted in
             // Off frees the 2.8 GB the model holds in memory and keeps the file, so turning it
             // back on is a load of a second or two rather than another download.
@@ -364,7 +371,7 @@ private struct UpdatesSection: View {
 
         SettingsSection(
             title: "Updates",
-            subtitle: "The only requests the app makes on its own, and unauthenticated reads of a public page — nothing about you or this Mac is sent. Checking happens by itself if you let it; downloading only ever happens when you press the button."
+            subtitle: "The only requests the app makes on its own, and unauthenticated reads of a public page — nothing about you or this Mac is sent. Checking happens by itself if you let it — when the app starts, then again once a day; downloading only ever happens when you press the button."
         ) {
             SettingsRow(
                 symbol: "arrow.down.circle",

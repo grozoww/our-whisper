@@ -21,8 +21,8 @@ them.
 1. **Never commit a secret.** Keys come from the user at runtime and live in the macOS Keychain.
    Nothing in the build, the tests or CI may require a key.
 2. **The app works with zero keys.** Local speech and local cleanup are the default path.
-3. **No telemetry, ever.** The only unattended network request is the GitHub release check, and it
-   sends nothing about the user. Downloading an update is a second request, and it is only ever
+3. **No telemetry, ever.** The only unattended network request is the GitHub release check — at
+   launch and then once a day, see `UpdateSchedule` — and it sends nothing about the user. Downloading an update is a second request, and it is only ever
    made on a button press — nothing about installing is wired to `checkAutomatically`, there is no
    pre-fetch and no retry timer. Both requests go out through `UpdateChecker.anonymousRequest`,
    which replaces the `User-Agent` and `Accept-Language` URLSession would otherwise fill in with
@@ -429,6 +429,27 @@ time it is read, which the menu would otherwise pay inside its body — so `AppS
 reads it once, right after a check finds a release. Use that method, not `updates.check`, from
 anywhere a user can start a check.
 
+**The release check repeats, and the loop is deliberately dumb.** A menu bar app is left running
+for weeks, so a check at launch alone only sees what shipped before the last restart.
+`AppState.watchForUpdates` sleeps `UpdateSchedule.interval` (a day: one request, far
+under GitHub's 60 an hour per address for unauthenticated callers, which a whole office shares) and
+asks again. Four decisions in it are not obvious:
+
+- **It is never cancelled.** It reads `checkAutomatically` each time it wakes rather than being
+  stopped and started with the switch, because cancelling mid-request makes `URLSession` throw and
+  `check` records that as a failed check the user then reads in Configuration. Turning the switch
+  *on* asks at once from `ConfigurationView`, not from the loop.
+- **A failed check retries in 15 minutes, not a day.** The sleep counts time the Mac spends
+  asleep (`Task.sleep(for:)` is on `ContinuousClock`), so a check that came due overnight fires as
+  the lid opens, when Wi-Fi can still be down. Not measured on hardware — the reasoning is the
+  clock's documented behaviour. That retry is for the *check*; rule 3's "no retry timer" is about
+  the download and still holds.
+- **A release already on offer is not re-checked.** `check` moves `state` through `.checking`, and a
+  newer release replacing the one under a half-finished download is worse than offering 1.0.16 and
+  finding 1.0.17 after the restart.
+- **Skipping a version still sticks.** `skippedVersion` is passed to every periodic check, so
+  "Skip" does not come back a day later; only a newer release does.
+
 **Padding a `Section` pads every row in it.** In a `List`, `Section { rows }.padding(.top, 10)`
 does not put 10pt above the group — it puts 10pt above each row inside it, so the rows come out
 taller than the rows in the group above and their selection highlights come out taller with them.
@@ -734,7 +755,7 @@ anything depending on `mlx-swift` 0.31.5+ needs Xcode's separately-downloaded Me
 
 ## Testing
 
-Swift Testing, not XCTest. 263 tests, no network, no API key, no microphone, no permissions.
+Swift Testing, not XCTest. 266 tests, no network, no API key, no microphone, no permissions.
 
 - Cloud providers are tested against `StubHTTPClient` with recorded response shapes.
 - Every screen is built and laid out in `ViewRenderingTests` — a view that crashes on

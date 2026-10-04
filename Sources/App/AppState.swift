@@ -99,6 +99,7 @@ final class AppState {
     }
 
     private var accessibilityWatcher: Task<Void, Never>?
+    private var updateWatcher: Task<Void, Never>?
     private var didStart = false
 
     /// - Parameter directory: Where the stores keep their JSON. Injected only so tests can render
@@ -209,6 +210,7 @@ final class AppState {
         if settings.settings.updates.checkAutomatically {
             await checkForUpdate()
         }
+        watchForUpdates()
 
         // Only a human sets this, and only to find out whether the updater works on this Mac.
         if SelfTest.installsUpdate {
@@ -228,6 +230,33 @@ final class AppState {
         await updates.check(skippedVersion: settings.settings.updates.skippedVersion, force: force)
         settings.settings.updates.lastCheck = Date()
         if availableUpdate != nil { _ = installer.refusal }
+    }
+
+    /// Asks again every `UpdateSchedule.interval`, for as long as the process lives.
+    ///
+    /// The loop is never cancelled and reads the switch each time it wakes, instead of being
+    /// stopped and started with it. Cancelling mid-request makes `URLSession` throw, and `check`
+    /// would record that as a failed check the user then reads in Configuration. A switch that is
+    /// off costs one comparison a day; turning it on is `checkForUpdate` from the view.
+    ///
+    /// A release already on offer is left alone. Re-checking would replace it with a newer one
+    /// under a download that is halfway through the old one, and the check after the restart finds
+    /// anything newer anyway.
+    private func watchForUpdates() {
+        guard updateWatcher == nil else { return }
+        // After a failed launch check this is the short retry, not a whole interval of silence.
+        let firstDelay = UpdateSchedule.delay(after: updates.state)
+        updateWatcher = Task { [weak self] in
+            var delay = firstDelay
+            while !Task.isCancelled {
+                try? await Task.sleep(for: delay)
+                guard let self else { return }
+                if self.settings.settings.updates.checkAutomatically, self.availableUpdate == nil {
+                    await self.checkForUpdate()
+                }
+                delay = UpdateSchedule.delay(after: self.updates.state)
+            }
+        }
     }
 
     static var isRunningTests: Bool { AppDirectories.isRunningTests }
