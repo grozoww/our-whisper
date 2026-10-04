@@ -55,6 +55,29 @@ struct SchemaEvolutionTests {
         #expect(settings.history.isEnabled == false)    // the good one survived
     }
 
+    @Test("A mode saved with one of the original five colours keeps it")
+    func modeKeepsItsOldColour() throws {
+        // The palette grew from five colours to thirty. Raw values are what is on disk, so the
+        // five that existed before have to mean what they always meant.
+        for name in ["orange", "blue", "purple", "green", "graphite"] {
+            let json = #"{"name":"Old","symbol":"star","instructions":"x","tint":"\#(name)"}"#
+            let mode = try JSONDecoder().decode(Mode.self, from: Data(json.utf8))
+            #expect(mode.tint.rawValue == name)
+        }
+    }
+
+    @Test("A colour this version does not know costs the colour, not the mode")
+    func modeWithUnknownColourStillLoads() throws {
+        // A hand-edited file, or one written by a newer version with a bigger palette. The old
+        // decoder behaved the same way, so downgrading cannot quarantine the file either.
+        let json = #"{"name":"Future","symbol":"star","instructions":"keep me","tint":"chartreuse"}"#
+        let mode = try JSONDecoder().decode(Mode.self, from: Data(json.utf8))
+
+        #expect(mode.name == "Future")
+        #expect(mode.instructions == "keep me")
+        #expect(mode.tint == .blue)  // the default
+    }
+
     @Test("A mode missing a field it gained later still loads")
     func modeDecodesWithoutNewFields() throws {
         let json = #"{"id":"00000000-0000-0000-0000-00000000A001","name":"Legacy","symbol":"star","instructions":"x"}"#

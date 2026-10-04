@@ -10,7 +10,7 @@ struct Mode: Codable, Identifiable, Equatable, Sendable {
     var id: UUID = UUID()
     var name: String
     var symbol: String
-    var tint: AccentTint = .blue
+    var tint: ModeColor = .blue
 
     /// Passed to the on-device model as its system instructions. Ignored when the model is off,
     /// which is why the rule toggles below are not merely a subset of it.
