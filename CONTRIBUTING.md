@@ -226,10 +226,15 @@ xcrun notarytool store-credentials OurWhisper --key AuthKey_XXXX.p8 --key-id XXX
 NOTARY_KEYCHAIN_PROFILE=OurWhisper ./scripts/package.sh
 ```
 
-**Trying it before you merge.** Actions → Release → Run workflow, on your branch. It signs,
-notarizes and publishes a *prerelease*, which the app's update check does not offer. This is the
-only way to prove the secrets and the runner's keychain work together, and it costs nothing to
-repeat.
+**Releasing, and trying it before you merge.** Actions → Release → Run workflow, then pick the
+branch. Nothing publishes by itself when you merge to `main`.
+
+- On `main` it signs, notarizes and publishes a finished release, which becomes the latest. That is
+  the one that reaches users: the app's update check and `install.sh` both offer it.
+- On any other branch it does the same and publishes a *prerelease*, which neither offers. Install
+  it on purpose with `install.sh --version build-<n>`; the release notes say so. This is also the
+  only way to prove the secrets and the runner's keychain work together, and it costs nothing to
+  repeat.
 
 **Certificates expire.** A Developer ID certificate issued from Apple's older intermediate is
 capped at that intermediate's expiry, 1 Feb 2027, rather than the usual five years; one from the
@@ -281,24 +286,30 @@ Releases are named `release-<version>-<short sha>` — `release-1.0.3-a1b2c3d` �
 trigger. The tag says what kind of build it is; the name says which code is in it, which is the
 first thing anyone asks when a download misbehaves.
 
-| Trigger | Tag | Name |
-| --- | --- | --- |
-| Pull request | — | Nothing published. Builds and tests only — no packaging. |
-| Push to `main` | `release-1.0.3-a1b2c3d` | `release-1.0.3-a1b2c3d` |
-| Push a tag `v*` | the tag | `release-1.0.3-a1b2c3d` |
-| Actions → Run workflow | `build-<n>`, a prerelease, for rehearsing | `release-1.0.3-a1b2c3d (build 7)` |
+| Trigger | Tag | Name | Offered to users |
+| --- | --- | --- | --- |
+| Pull request | — | Nothing published. Builds and tests only — no packaging. | — |
+| Merge to `main` | — | Nothing published. Run the workflow when you want a release. | — |
+| Actions → Run workflow, on `main` | `release-1.0.3-a1b2c3d` | `release-1.0.3-a1b2c3d` | Yes, and it is the latest |
+| Push a tag `v*` on a commit in `main`'s history | the tag | `release-1.0.3-a1b2c3d` | Yes |
+| Actions → Run workflow, on any other branch | `build-<n>` | `release-1.0.3-a1b2c3d from feature/x (build 7)` | No — a prerelease |
+| Push a tag `v*` on any other commit | the tag | `release-1.0.3-a1b2c3d from v1.2.0 (build 7)` | No — a prerelease |
 
 Every one of them is signed and notarized, or the job fails — `.github/workflows/release.yml`
 checks the five secrets are present before it builds anything.
 
-A `v*` tag is a finished release, and so is a merge to `main`; only a `workflow_dispatch` rehearsal
-is a prerelease, because that is a build nobody merged. This was once decided by whether the build
-was notarized, and with no Apple account that marked *every* release a prerelease. `/releases/latest`
-skips prereleases, so the app's update check got a 404 and quietly reported "up to date" for ever.
+Where the build ran is what decides whether it is finished, and `release.yml` decides it in one
+step: a run on `main`, or a `v*` tag whose commit is in `main`'s history, is a release; everything
+else is a prerelease. The tag has to be checked because `v*` can be pushed on any commit, and a tag
+on an unmerged branch would otherwise publish that branch to everyone. This was once decided by
+whether the build was notarized, and with no Apple account that marked *every* release a
+prerelease. `/releases/latest` skips prereleases, so the app's update check got a 404 and quietly
+reported "up to date" for ever.
 
-Nothing is deleted and no tag is ever reused, so pushing to `main` adds a build rather than
-replacing the one before it. Each tag carries the version and the commit, so it is unique per
-commit and exactly one DMG is ever attached to it.
+Nothing is deleted, so a release from a new commit adds to the list rather than replacing the one
+before it. Each tag carries the version and the commit, so it is unique per commit. Running the
+workflow on `main` twice for one commit is the one case that reuses a tag: it refreshes that
+commit's release in place, which is what you want after a failed or cancelled run.
 
 The DMG job in `ci.yml` exists because the Release build is not the Debug build: it signs, it
 hardens the runtime, it compiles the asset catalog and it is arm64-only. Each of those has broken
@@ -306,10 +317,11 @@ without the Debug build noticing.
 
 ### Installing
 
-`scripts/install.sh` is the `curl | bash` in the README. It asks `/releases/latest`, and if that
-404s — which it does when every release is a prerelease — it reads the list and takes the highest
-version out of the DMG filenames. Not the first entry: GitHub does not return that list newest
-first, and reading it positionally is what had `curl | bash` installing 1.0.8 while 1.0.10 was out.
+`scripts/install.sh` is the `curl | bash` in the README. It asks `/releases/latest` and nothing
+else, so a prerelease — any build not cut from `main` — is never what it installs unless you name
+it with `--version`. The DMG inside that one release is chosen by the version in its filename, not
+by position: GitHub does not return a list in any order you can rely on, and reading one
+positionally is what had `curl | bash` installing 1.0.8 while 1.0.10 was out.
 
 It then asks Gatekeeper about the disk image *before* it quits or touches the installed copy,
 and stops if the answer is no — a release that is not notarized, or that was tampered with, is not

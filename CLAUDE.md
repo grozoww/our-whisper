@@ -958,7 +958,7 @@ installed copy, and stops if the answer is no.
 The same mistake one level up is what broke the update check: every release was marked a
 prerelease because none was notarized, `/releases/latest` skips prereleases, and the app read the
 resulting 404 as "up to date". Notarization decides whether Gatekeeper complains, not whether a
-release is finished — merging to main is what decides that.
+release is finished — where it was built is what decides that.
 
 Copies signed with the old self-signed certificate cannot update themselves into the first
 Developer ID release: `BundleSignature` pins the *running* app's requirement and the new build does
@@ -968,13 +968,28 @@ it only helps users the first Developer ID release has not reached yet, and cost
 the one place the whole update is trusted. Accessibility and the microphone are re-granted once
 either way, and `INSTALL.md` says so; delete that section a few releases after everyone has moved.
 
-**Merging to main publishes a finished release, and it becomes the latest.** A pull request builds
-and tests but does not package; a push to main packages and publishes, tagged
-`release-<version>-<short sha>` so nothing is ever replaced; a `v*` tag does the same under its own
-tag. Only a `workflow_dispatch` rehearsal is a prerelease, because that is a build nobody merged.
-Every one of them is *named* `release-<version>-<short sha>`. Marking the main builds prereleases
-is what kept the update check silent for the project's whole life: `UpdateChecker` skips
-prereleases, no `v*` tag was ever cut, and so there was never anything for it to find.
+**A release is cut by hand, and where it ran decides who is offered it.** Merging to main publishes
+nothing; Actions → Release → Run workflow is the decision, and the branch you pick is the
+choice. A pull request builds and tests but does not package. A run on `main` is a finished release,
+tagged `release-<version>-<short sha>` so nothing is ever replaced, and it becomes the latest. A
+`v*` tag does the same under its own tag — but only if its commit is in main's history, because a
+tag can be pushed on any commit and one on an unmerged branch would otherwise publish that branch
+to everyone. **Everything else is a prerelease**, tagged `build-<run number>` and never the latest:
+`/releases/latest` skips it, so neither `UpdateChecker` nor `install.sh` can reach it, and it
+installs only with `install.sh --version build-<n>`. One step in `release.yml` ("Decide whether
+users are offered this build") makes that call and everything after it reads the result — do not
+work it out again from `github.event_name` anywhere else. It fails closed: a missing `origin/main`
+in the checkout means prerelease.
+
+Running it on `main` twice for one commit reuses the tag and refreshes that release in place. That
+is the recovery after a failed or cancelled run, and it replaced the habit of cancelling a merge's
+run to batch releases — nothing runs on merge now. Every release is *named*
+`release-<version>-<short sha>`; a branch build adds `from <branch> (build <n>)`. Marking the main
+builds prereleases is what kept the update check silent for the project's whole life:
+`UpdateChecker` skips prereleases, no `v*` tag was ever cut, and so there was never anything for it
+to find. There is no in-app alpha channel, on purpose: an alpha would have to sort above the stable
+it was cut from, and a branch's own version is its PR count at the time it forked, which falls
+behind main.
 
 The other half of that failure was in the tag itself. `UpdateChecker.normalise` stripped a leading
 `v` and nothing else, so `release-1.0.8-71f957b` came out with a word in front of the numbers and
@@ -987,18 +1002,23 @@ releases are tagged, change that with it.
 ahead of 1.0.9, 1.0.10 and 1.0.7 — an order matching neither `id`, `created_at` nor `published_at`,
 and GitHub documents no order at all. `install.sh` took the first DMG in that response, so
 `curl | bash` installed 1.0.8 while `/releases/latest` correctly pointed at 1.0.10. It now asks
-`/releases/latest` first and, only if that 404s, reads the version out of each DMG's *filename* and
-takes the highest with `sort -V`. **Never read a GitHub releases list positionally.** And the same
-mistake in miniature: plain `sort` puts 1.0.9 above 1.0.10, so the `-V` is not decoration.
+`/releases/latest` and nothing else — it used to fall back to the list, and a fallback that reads
+the list would install a branch build the moment the first question failed. The DMG inside that one
+release is chosen by the version in its *filename* with `sort -V`. **Never read a GitHub releases
+list positionally.** And the same mistake in miniature: plain `sort` puts 1.0.9 above 1.0.10, so the
+`-V` is not decoration.
 
 That rule has two callers, and fixing one of them is what let this run for four more releases.
 `UpdateChecker.newestFinishedRelease` took the first *finished* entry in the same list, on the same
 false belief, written down in its own doc comment as "GitHub returns them newest first". The list
 put `release-1.0.9-38ea901` ahead of 1.0.12, 1.0.11 and 1.0.10, so an app on 1.0.11 was told 1.0.9
 was the newest, found it was not newer, and reported itself up to date — silently, and looking
-perfectly healthy while doing it. It now takes the highest parsed version out of the whole list.
-**Parse every entry's version and take the maximum; never trust a position.** Both callers, every
-time.
+perfectly healthy while doing it. It first took the highest parsed version out of the whole list,
+and now asks `/releases/latest` as well, for a second reason: the list is a page of 30, branch
+builds are prereleases that pile up in it, and enough of them push the newest finished release off
+the page — the same silence again. `asksForTheLatestRelease` pins the endpoint. **If anything reads
+the list again, parse every entry's version and take the maximum; never trust a position, and never
+assume the release you want is on the first page.**
 
 The test is the other half of why it survived. `picksNewestFinishedRelease` was called "the newest
 finished release in the list is the one offered" and its fixture was sorted newest first, so it
@@ -1026,7 +1046,7 @@ anything depending on `mlx-swift` 0.31.5+ needs Xcode's separately-downloaded Me
 
 ## Testing
 
-Swift Testing, not XCTest. 380 tests, no network, no API key, no microphone, no permissions.
+Swift Testing, not XCTest. 386 tests, no network, no API key, no microphone, no permissions.
 
 - Cloud providers are tested against `StubHTTPClient` with recorded response shapes.
 - Every screen is built and laid out in `ViewRenderingTests` — a view that crashes on

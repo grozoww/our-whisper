@@ -1,24 +1,31 @@
 name: Release
 
-# Tag-triggered and restricted to the main repository. A fork — including a fork's pull request —
-# can never reach the signing certificate or the notarization credentials below.
+# Run by hand — Actions → Release → Run workflow, then pick the branch — or by pushing a `v*` tag.
+# Restricted to the main repository: a fork, including a fork's pull request, can never reach the
+# signing certificate or the notarization credentials below.
+#
+# A merge to `main` publishes nothing. When users get an update is a decision, not a side effect of
+# merging, and one press of Run workflow on `main` is that decision. What the run produces depends
+# on where it ran, and only one of the two is ever offered to anyone:
+#
+#   from `main`, or a `v*` tag in main's history   a finished release, the latest, offered by the
+#                                                  app's update check and by scripts/install.sh
+#   from any other branch                          a prerelease, tagged `build-<run number>`.
+#                                                  `/releases/latest` and `UpdateChecker` both skip
+#                                                  it, so it reaches only whoever installs it on
+#                                                  purpose: `install.sh --version build-<n>`
+#
+# Nothing is deleted and no tag is reused, so a new release adds to the list and an older one stays
+# downloadable. `scripts/install.sh` asks /releases/latest, and `UpdateChecker` takes the highest
+# version out of the list — neither trusts the order GitHub returns, which is not newest-first.
 on:
   push:
     tags: ['v*']
-    # Every push to main publishes its own release, tagged with the version and the commit it was
-    # built from, so there is always a current DMG to download without anyone cutting a tag. Each
-    # one is kept: nothing is deleted and no tag is reused, so an older build stays downloadable
-    # after a newer one lands. `scripts/install.sh` asks /releases/latest and falls back to picking
-    # the highest version out of the list — it does not trust the order GitHub returns, which is
-    # not newest-first.
-    branches: [main]
-  # Rehearses the whole thing — signing, notarizing, publishing — from any branch, without merging
-  # or cutting a tag. The result is a prerelease, which the app's update check does not offer.
   workflow_dispatch:
 
-# Two pushes to main packaging at once would each build the same repository at a different commit
-# and publish within seconds of each other. They no longer collide over a tag, but serialising them
-# keeps /releases/latest pointing at the commit that actually landed last.
+# Two runs on one ref would each build the same repository at a different commit and publish within
+# seconds of each other. Serialising them keeps /releases/latest pointing at the commit that
+# actually landed last. Runs on different branches do not wait for each other.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -52,6 +59,44 @@ jobs:
 
       - name: Announce it
         run: echo "::notice::$RELEASE_NAME (build $BUILD)"
+
+      # The one place that decides whether users are offered this build, and what it is tagged.
+      # Everything below reads PRERELEASE and RELEASE_TAG instead of working them out again from
+      # the trigger.
+      #
+      # `main` is the ref itself for a manual run. A tag is only a release when its commit is in
+      # main's history: `v*` can be pushed on any commit, and a tag on an unmerged branch would
+      # otherwise publish that branch to everyone. It fails closed — if `origin/main` is missing
+      # from the checkout, `merge-base` errors, and an error here means prerelease.
+      #
+      # A tag push keeps its own tag. A manual run on main is tagged with what the build is called,
+      # which carries the version and the commit: unique per commit, so each release is added to
+      # the list rather than replacing the one before it. A build from any other branch gets the run
+      # number — never the branch name, because a branch called `v2.5-spike` would put a version in
+      # the tag, and a tag shape that carries a version has to survive `UpdateChecker.normalise`.
+      - name: Decide whether users are offered this build
+        run: |
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            prerelease=false
+          elif [ "$GITHUB_REF_TYPE" = "tag" ] && git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            prerelease=false
+          else
+            prerelease=true
+            echo "::notice::Built from $GITHUB_REF_NAME, not from main: published as a prerelease, which the app does not offer."
+          fi
+
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            tag="$GITHUB_REF_NAME"
+          elif [ "$prerelease" = false ]; then
+            tag="$RELEASE_NAME"
+          else
+            tag="build-$GITHUB_RUN_NUMBER"
+          fi
+
+          {
+            echo "PRERELEASE=$prerelease"
+            echo "RELEASE_TAG=$tag"
+          } >> "$GITHUB_ENV"
 
       # Every release is signed with a Developer ID and notarized, or it does not happen. A job
       # that shrugs off a missing secret and ships whatever it can build is how every update used to
@@ -186,16 +231,12 @@ jobs:
           printf 'Version **%s** (build %s) from [`%s`](%s/commit/%s).\n\n' \
             "$VERSION" "$BUILD" "$SHA" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$GITHUB_SHA" \
             > release-notes.md
-          # Only a rehearsal needs a warning. A build from main is a finished release like any
-          # other, and telling people to wait for a `v…` tag when none is ever cut is what sent
+          # Only a build that is not from main needs a warning. A release from main is finished like
+          # any other, and telling people to wait for a `v…` tag when none is ever cut is what sent
           # them looking for a download that does not exist.
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            cat >> release-notes.md <<'REHEARSAL'
-          > **Rehearsal build.** Run by hand, not published by a merge to `main`. It stays a
-          > prerelease and the app's update check will not offer it — install it on purpose or
-          > not at all.
-
-          REHEARSAL
+          if [ "$PRERELEASE" = true ]; then
+            printf '> **Not a release.** Built from `%s`, not from `main`. It is a prerelease, so the app'"'"'s update check and `install.sh` skip it — install it on purpose or not at all.\n>\n> `curl -fsSL https://raw.githubusercontent.com/%s/main/scripts/install.sh | bash -s -- --version %s`\n\n' \
+              "$GITHUB_REF_NAME" "$GITHUB_REPOSITORY" "$RELEASE_TAG" >> release-notes.md
           fi
           cat dist/INSTALL.md >> release-notes.md
           printf '\n---\n\n' >> release-notes.md
@@ -209,28 +250,22 @@ jobs:
             dist/SHA256SUMS
           body_path: release-notes.md
           generate_release_notes: true
-          # A tag push keeps its own tag. A push to main is tagged with what the build is called,
-          # which carries the version and the commit — unique per commit, so each build is added
-          # to the releases list rather than replacing the one before it. workflow_dispatch gets a
-          # run number, so two rehearsals of the same commit do not collide.
-          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || (github.event_name == 'push' && env.RELEASE_NAME || format('build-{0}', github.run_number)) }}
-          # release-1.0.3-a1b2c3d, whatever the trigger — the version and the commit are what
-          # anyone reading the list actually wants, and the tag above already says which kind of
-          # build it is. A manual run adds its run number, because two rehearsals of the same
-          # commit would otherwise be two releases with identical names.
-          name: ${{ github.event_name == 'workflow_dispatch' && format('{0} (build {1})', env.RELEASE_NAME, github.run_number) || env.RELEASE_NAME }}
+          # Chosen in "Decide whether users are offered this build", above.
+          tag_name: ${{ env.RELEASE_TAG }}
+          # release-1.0.3-a1b2c3d — the version and the commit are what anyone reading the list
+          # actually wants. A build from another branch says so and adds its run number, because
+          # two of them from one commit would otherwise be two releases with identical names.
+          name: ${{ env.PRERELEASE == 'true' && format('{0} from {1} (build {2})', env.RELEASE_NAME, github.ref_name, github.run_number) || env.RELEASE_NAME }}
           target_commitish: ${{ github.sha }}
-          # Merging to main is the decision. What lands there is what people should be running, so
-          # the release it produces is a finished one and it becomes the latest — same as a version
-          # tag. Only a workflow_dispatch rehearsal stays a prerelease, because that is a build
-          # nobody merged.
+          # What is on main is what people should be running, so a release from there is a finished
+          # one and it becomes the latest. Anything else is a prerelease and is never the latest.
           #
           # Marking a build from main a prerelease is what kept the update check quiet. Prereleases
           # are skipped by `/releases/latest` *and* by `UpdateChecker`, and with no `v*` tag ever
           # cut there was nothing left for either to find — so every user was told they were up to
           # date, for ever, while the DMG they wanted sat in the releases list.
-          prerelease: ${{ github.event_name == 'workflow_dispatch' }}
-          make_latest: ${{ github.event_name != 'workflow_dispatch' }}
+          prerelease: ${{ env.PRERELEASE == 'true' }}
+          make_latest: ${{ env.PRERELEASE != 'true' }}
 
       - name: Clean up the keychain and the key
         if: always()
