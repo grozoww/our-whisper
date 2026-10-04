@@ -848,9 +848,19 @@ requires a `detail` for that reason.
 **An assistant preset (Summarise, Reply, Translate, Fix grammar).** Not built, on purpose: each is a
 separate prompt to tune, and "Ask" had to have an eval and numbers first. It has now. Add a preset as
 a built-in `Mode` with a fixed id in the `…A00n` style, add cases for it to
-`scripts/assistant-cases.tsv`, and run `./scripts/eval-assistant.sh`. A dedicated hotkey for
-assistants and answering *over a selection* are the other two things asked for and not built; both
-are in `docs/handoff-assistant-mode.md`.
+`scripts/assistant-cases.tsv`, and run `./scripts/eval-assistant.sh`.
+
+Three more things were asked for around the assistant and are not built:
+
+- **A dedicated hotkey** ("hold ⌥Space to ask") instead of choosing the mode first. Real work in
+  `HotkeyMonitor`: `configure` binds two chords today (`toggleChord`, `pushToTalkChord`), its
+  callbacks run inside the event tap and must stay fast, and `DictationSettings` would grow a third.
+- **Answering over a selection**, so the answer replaces the selected text instead of being typed at
+  the cursor. It means reading the selection through Accessibility (`kAXSelectedTextAttribute`)
+  at inject time, for the reasons `TextInjector.acceptance` gives, and is a separate feature.
+- **Speculative decoding for E4B.** The model's repository carries `mtp-gemma-4-E4B-it-Q4_0.gguf`
+  (0.06 GB), draft weights that could recover much of the speed lost against E2B. Not investigated;
+  whether the pinned llama.cpp (`llama.swift` 2.10549.0) supports it is unknown.
 
 **A new icon for modes.** Add it to `ModeSymbols.all` with keywords in English and Russian (and
 Ukrainian where it differs). The name has to exist on macOS 15, the oldest the app runs on: a name
