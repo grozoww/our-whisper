@@ -852,6 +852,11 @@ Swift Testing, not XCTest. 304 tests, no network, no API key, no microphone, no 
 - Every screen is built and laid out in `ViewRenderingTests` — a view that crashes on
   construction compiles fine and fails the first time someone clicks that sidebar row.
 - The rule refiner has the deepest coverage because it is pure and it touches every dictation.
+- A test that waits on a timer waits on the timer's own `Task`, never on a fixed `Task.sleep`.
+  `PillWindowController.dismiss(after:)` returns its task and `HotkeyMonitor.pendingPressStart`
+  exposes its. Another suite holding the main thread makes a timer fire late, and a fixed wait then
+  asserts before it has: the hold-delay tests failed that way on CI. To prove something did *not*
+  happen, take the task, cancel it the way the code would, and await it.
 
 What is *not* covered, and why: what the cleanup model does with a prompt, which no test can reach
 without the 2.8 GB file — `./scripts/eval-clipboard.sh` is the measurement for the clipboard lookup

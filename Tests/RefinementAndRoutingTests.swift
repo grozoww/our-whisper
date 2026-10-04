@@ -229,6 +229,13 @@ struct SpeechLanguageTests {
 
 /// The fn key is the default hold-to-talk key and macOS also uses a *tap* of it to switch input
 /// source. These cover the only thing that separates the two gestures: how long the key is down.
+///
+/// Nothing here sleeps for a fixed time. These ran with 150–350 ms waits and failed once on a
+/// loaded CI runner, where the hold timer fired after the assertion had looked; the pill's tests
+/// hit the same thing. They wait on the timer's own `Task` instead (`pendingPressStart`), which
+/// finishes when the timer does however late that is. A test that asserts nothing happened has no
+/// timer to wait for, so it releases the key and awaits the *cancelled* timer: that returns at
+/// once, and if the cancel were missing it would return only after the press had started.
 @Suite("Hold-to-talk delay")
 @MainActor
 struct PushToTalkDelayTests {
@@ -253,11 +260,13 @@ struct PushToTalkDelayTests {
 
     @Test("A tap shorter than the delay never starts a recording")
     func tapIsIgnored() async throws {
-        let (monitor, recorder) = monitor(delay: .milliseconds(200))
+        let (monitor, recorder) = monitor(delay: .milliseconds(20))
 
         press(monitor, .maskSecondaryFn)
+        // Taken before the release, which cancels the timer and clears the property.
+        let pending = try #require(monitor.pendingPressStart)
         press(monitor, [])
-        try await Task.sleep(for: .milliseconds(350))
+        await pending.value
 
         // Not even a pressEnd: nothing started, so there is nothing to finish, and a stray
         // pressEnd would stop whatever the toggle chord had started.
@@ -266,12 +275,13 @@ struct PushToTalkDelayTests {
 
     @Test("A hold past the delay starts, and releasing it finishes")
     func holdStartsAndStops() async throws {
-        let (monitor, recorder) = monitor(delay: .milliseconds(150))
+        let (monitor, recorder) = monitor(delay: .milliseconds(20))
 
         press(monitor, .maskSecondaryFn)
+        let pending = try #require(monitor.pendingPressStart)
         #expect(recorder.events.isEmpty)
 
-        try await Task.sleep(for: .milliseconds(350))
+        await pending.value
         #expect(recorder.events == [.pressStart])
 
         press(monitor, [])
@@ -284,15 +294,20 @@ struct PushToTalkDelayTests {
 
         press(monitor, .maskSecondaryFn)
         #expect(recorder.events == [.pressStart])
+        #expect(monitor.pendingPressStart == nil)
     }
 
     @Test("Holding the key past the delay reports one start, not one per event")
     func repeatedFlagEventsStartOnce() async throws {
-        let (monitor, recorder) = monitor(delay: .milliseconds(100))
+        let (monitor, recorder) = monitor(delay: .milliseconds(20))
 
         press(monitor, .maskSecondaryFn)
+        let first = try #require(monitor.pendingPressStart)
         press(monitor, .maskSecondaryFn)
-        try await Task.sleep(for: .milliseconds(300))
+        // The second event must find the timer already running, not arm another one.
+        #expect(monitor.pendingPressStart == first)
+
+        await first.value
         press(monitor, .maskSecondaryFn)
 
         #expect(recorder.events == [.pressStart])
