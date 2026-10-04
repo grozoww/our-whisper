@@ -1,0 +1,50 @@
+# Sentences for scripts/eval-clipboard.sh in languages other than English, Russian and Ukrainian:
+# German, French, Spanish, Italian, Polish, Portuguese, Dutch, Czech. P = asks for the clipboard to be
+# pasted, N = does not. Tab-separated. Written for the examples to be tuned against, so they are NOT a
+# measurement of the shipped lookup; scripts/clipboard-requests-intl-heldout.tsv is, and it was not
+# looked at while tuning. Several are near misses on purpose: copying TO the clipboard, pasting
+# something ELSE, only talking about it, "do not paste yet".
+P	Hier ist der Fehler, füge bitte den Inhalt der Zwischenablage ein und erkläre ihn.
+P	Füg ein, was ich kopiert habe.
+N	Kopiere den Link in die Zwischenablage.
+N	Füge die Tabelle in die Präsentation ein, bitte.
+N	Die Zwischenablage funktioniert heute nicht richtig, ich schaue morgen nach.
+N	Füge noch nichts aus der Zwischenablage ein.
+P	Voici l'erreur, colle le contenu du presse-papiers et explique-moi ce qu'elle veut dire.
+P	Colle ce que j'ai copié.
+N	Copie ce lien dans le presse-papiers.
+N	Colle le graphique dans la diapositive trois, s'il te plaît.
+N	Le presse-papiers ne marche plus depuis ce matin, je regarde ça demain.
+N	Ne colle rien du presse-papiers pour l'instant.
+P	Aquí está el error, pega el contenido del portapapeles y dime qué significa.
+P	Pega lo que acabo de copiar.
+N	Copia este enlace al portapapeles.
+N	Pega la tabla en la presentación, por favor.
+N	El portapapeles no funciona otra vez, lo miraré mañana.
+N	Todavía no pegues nada del portapapeles.
+P	Ecco l'errore, incolla il contenuto degli appunti e spiegami cosa significa.
+P	Incolla quello che ho copiato.
+N	Copia questo link negli appunti.
+N	Incolla il grafico nella terza slide, per favore.
+N	Gli appunti non funzionano di nuovo, ci guardo domani.
+P	Oto błąd, wklej zawartość schowka i wyjaśnij, co on oznacza.
+P	Wklej to, co skopiowałem.
+N	Skopiuj ten link do schowka.
+N	Wklej wykres na trzeci slajd, proszę.
+N	Schowek znowu nie działa, sprawdzę to jutro.
+N	Nie wklejaj jeszcze niczego ze schowka.
+P	Aqui está o erro, cole o conteúdo da área de transferência e explique o que significa.
+P	Cole o que eu copiei.
+N	Copie este link para a área de transferência.
+N	Cole o gráfico no terceiro slide, por favor.
+N	A área de transferência não funciona de novo, vou ver isso amanhã.
+P	Hier is de fout, plak de inhoud van het klembord en leg uit wat het betekent.
+P	Plak wat ik heb gekopieerd.
+N	Kopieer deze link naar het klembord.
+N	Plak de grafiek op de derde dia, alsjeblieft.
+N	Het klembord werkt weer niet, ik kijk er morgen naar.
+P	Tady je ta chyba, vlož obsah schránky a vysvětli mi, co znamená.
+P	Vlož to, co jsem zkopíroval.
+N	Zkopíruj tento odkaz do schránky.
+N	Vlož graf na třetí snímek, prosím.
+N	Schránka zase nefunguje, podívám se na to zítra.

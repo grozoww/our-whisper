@@ -1,7 +1,7 @@
 import Foundation
 
-/// A language model file the app downloads for cleanup: where it comes from, how big it is, and
-/// the checksum it has to match.
+/// A language model file the app downloads: where it comes from, how big it is, and the checksum it
+/// has to match. Named for the first one it carried — cleanup — and now also the assistant's.
 ///
 /// The URL names a commit, not `main`. A checksum against a moving branch is a download that
 /// starts failing for every user the day the repository is updated, with nothing wrong on either
@@ -24,6 +24,25 @@ struct CleanupModel: Sendable, Equatable {
         url: URL(string: "https://huggingface.co/ggml-org/gemma-4-E2B-it-GGUF/resolve/b4243c156154b6dca9324415f8c7ccc098b4aed1/gemma-4-E2B-it-Q4_0.gguf")!,
         bytes: 2_841_481_184,
         sha256: "8e30dff3ac4c8434c49a7036fa15564bdbb6044e42bf04550bf1a096ad7e6a52"
+    )
+
+    /// Gemma 4 E4B, the larger sibling, for the assistant mode only.
+    ///
+    /// From Google's model card, E2B to E4B: MMLU Pro 60.0 to 69.4, multilingual MMMLU 67.4 to 76.6,
+    /// instruction following over turns (Tau2) 24.5 to 42.2 — the things a summarise-and-reply mode
+    /// lives on, and the multilingual one matters because Russian and Ukrainian are first-class
+    /// here. It costs 1.75 GB more disk and, measured on an M1 Max, writes about 35 tokens a second
+    /// against E2B's 55 — and, the reason it is here at all, it ignored an instruction planted in
+    /// the clipboard in all 18 Russian runs and 18 English ones, where E2B typed what a Russian one
+    /// told it to type in all 5. Dictation
+    /// cleanup stays on E2B: 0.35 s there is not worth the slower model. Same commit-pinning
+    /// rule as above; the bytes and checksum are the ones Hugging Face publishes for that commit.
+    static let gemma4E4B = CleanupModel(
+        name: "Gemma 4 E4B",
+        fileName: "gemma-4-E4B-it-Q4_0.gguf",
+        url: URL(string: "https://huggingface.co/ggml-org/gemma-4-E4B-it-GGUF/resolve/b8093469224f83f5c38f691eb906c380e9e63114/gemma-4-E4B-it-Q4_0.gguf")!,
+        bytes: 4_590_807_392,
+        sha256: "a555b900214b477d8880e7832e0b8925e139b0159640036b09fe472b6f2097f2"
     )
 
     func location(in directory: URL) -> URL {

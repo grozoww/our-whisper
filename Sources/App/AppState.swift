@@ -12,6 +12,7 @@ final class AppState {
         case listening
         case transcribing
         case formatting
+        case answering
         case failed(String)
 
         /// A waiting update only replaces the *idle* glyph. Once the app is listening or working,
@@ -22,6 +23,7 @@ final class AppState {
             case .listening: .symbol("mic.fill")
             case .transcribing: .symbol("waveform")
             case .formatting: .symbol("sparkles")
+            case .answering: .symbol("wand.and.stars")
             case .failed: .symbol("exclamationmark.triangle.fill")
             }
         }
@@ -32,6 +34,7 @@ final class AppState {
             case .listening: "OurWhisper, listening"
             case .transcribing: "OurWhisper, transcribing"
             case .formatting: "OurWhisper, formatting"
+            case .answering: "OurWhisper, answering"
             case .failed(let message): "OurWhisper, error: \(message)"
             }
         }
@@ -69,6 +72,9 @@ final class AppState {
     let vocabulary: VocabularyStore
     let history: HistoryStore
     let onDeviceRefiner: OnDeviceRefiner
+    /// The assistant modes' model: a larger file than cleanup's, loaded when an assistant mode is
+    /// chosen and freed when it has gone unused for a while. See `watchAssistantModel`.
+    let assistantModel: OnDeviceRefiner
     let router: TranscriptionRouter
     let speechModel: SpeechModelStatus
     let models: ModelLibrary
@@ -82,6 +88,7 @@ final class AppState {
         case .listening: .listening
         case .transcribing: .transcribing
         case .formatting: .formatting
+        case .answering: .answering
         case .failed(let message): .failed(message)
         }
     }
@@ -100,6 +107,7 @@ final class AppState {
 
     private var accessibilityWatcher: Task<Void, Never>?
     private var updateWatcher: Task<Void, Never>?
+    private var assistantWatcher: Task<Void, Never>?
     private var didStart = false
 
     /// - Parameter directory: Where the stores keep their JSON. Injected only so tests can render
@@ -107,10 +115,12 @@ final class AppState {
     /// - Parameter speechModel: Likewise, so a test can render a screen in the middle of a
     ///   download or a compile without waiting for one.
     /// - Parameter cleanupModel: Likewise, for the cleanup model's download and load.
+    /// - Parameter assistantModel: Likewise, for the assistant's.
     init(
         directory: URL = AppDirectories.support,
         speechModel: SpeechModelStatus = SpeechModelStatus(),
-        cleanupModel: OnDeviceRefiner = OnDeviceRefiner()
+        cleanupModel: OnDeviceRefiner = OnDeviceRefiner(),
+        assistantModel: OnDeviceRefiner = OnDeviceRefiner(model: .gemma4E4B, slot: .assistant)
     ) {
         let router = TranscriptionRouter()
         let settings = SettingsStore(directory: directory)
@@ -124,16 +134,22 @@ final class AppState {
         self.vocabulary = vocabulary
         self.history = history
         self.onDeviceRefiner = onDevice
+        self.assistantModel = assistantModel
         self.router = router
         self.speechModel = speechModel
-        self.models = ModelLibrary(parakeet: router.parakeet, speechModel: speechModel, cleanup: onDevice)
+        self.models = ModelLibrary(
+            parakeet: router.parakeet,
+            speechModel: speechModel,
+            cleanup: onDevice,
+            assistant: assistantModel
+        )
         self.dictation = DictationController(
             settings: settings,
             modes: modes,
             vocabulary: vocabulary,
             history: history,
             router: router,
-            refinement: RefinementPipeline(onDevice: onDevice),
+            refinement: RefinementPipeline(onDevice: onDevice, assistant: assistantModel),
             speechModel: speechModel
         )
 
@@ -143,6 +159,14 @@ final class AppState {
         speechModel.onFinish = { [weak self] in self?.models.refresh() }
         models.setCleanupModelEnabled = { [weak self] isOn in
             self?.settings.settings.refinement.useCleanupModel = isOn
+        }
+
+        // Choosing an assistant mode — from the menu bar or from Configuration — is what brings its
+        // model onto this Mac and into memory. Set up here because both screens write the same
+        // setting and neither should have to know.
+        settings.onChange = { [weak self] old, new in
+            guard old.refinement.activeModeID != new.refinement.activeModeID else { return }
+            self?.prepareAssistantIfChosen()
         }
 
         // The installer knows how to replace the app but not when doing so would cost the user
@@ -182,7 +206,7 @@ final class AppState {
         // wait on a 2.8 GB read — or, on a new install, on the download. After the speech model,
         // not beside it: dictation works without cleanup and not without speech, so on a first
         // launch the 600 MB that matters should not be queueing behind 2.8 GB that does not yet.
-        if settings.settings.refinement.wantsCleanupModel {
+        if settings.settings.refinement.wantsCleanupModel, SelfTest.requestedAssistant == nil {
             Task {
                 await dictation.launchPreparation?.value
                 // Asked again: the speech model can take minutes on a first launch, and someone who
@@ -198,8 +222,27 @@ final class AppState {
                 }
             }
         }
+        // The assistant's model is *loaded* at launch when the chosen mode is an assistant and the
+        // file is already here, so the first answer does not wait on a read. It is never fetched
+        // at launch: someone who removed it in Models and kept the mode has not asked for 4.6 GB
+        // every time the app starts.
+        if SelfTest.requestedAssistant == nil,
+           modes.activeAssistant(settings: settings.settings.refinement) != nil,
+           assistantModel.availability == .downloaded {
+            Task { await assistantModel.prepare() }
+        }
+        watchAssistantModel()
+
         if let text = SelfTest.requestedCleanup {
-            await SelfTest.runCleanup(text, refiner: onDeviceRefiner, modes: modes, settings: settings.settings.refinement)
+            await SelfTest.runCleanup(
+                text,
+                refiner: SelfTest.refiner(replacing: onDeviceRefiner, slot: .cleanup),
+                modes: modes,
+                settings: settings.settings.refinement
+            )
+        }
+        if let cases = SelfTest.requestedAssistant {
+            await SelfTest.runAssistant(casesPath: cases, refiner: SelfTest.refiner(replacing: assistantModel, slot: .assistant))
         }
 
         // An accessory app with no Dock icon that silently does nothing is indistinguishable from
@@ -223,6 +266,39 @@ final class AppState {
             await SelfTest.installUpdate(found: updates, with: installer)
         }
     }
+
+    /// Downloads the assistant's model if it is missing and loads it, when the chosen mode is an
+    /// assistant. Called when a mode is chosen and when a mode becomes one.
+    ///
+    /// This is the one place a 4.6 GB download starts without a button on the Models screen being
+    /// pressed, and it is a direct result of the person choosing the mode: the mode's own editor and
+    /// the Models screen both show it happening, and Remove there takes the file away without this
+    /// fetching it again — nothing re-downloads at launch, see `start`. Not under test: the suite
+    /// builds an `AppState` and changes the chosen mode, and a test run must not fetch 4.6 GB. Nor
+    /// a screenshot run, which poses the assistant's screen by choosing it.
+    func prepareAssistantIfChosen() {
+        guard !Self.isRunningTests, !ScreenshotMode.isActive,
+              modes.activeAssistant(settings: settings.settings.refinement) != nil
+        else { return }
+        Task { await assistantModel.prepare() }
+    }
+
+    /// Frees the assistant's model after it has gone unused for a while. A model of 4.6 GB that is
+    /// resident all day for a feature used a few times is memory the rest of the Mac could have,
+    /// and bringing it back is seconds, started when recording begins. The cleanup model is never
+    /// freed this way: dictation is the app.
+    private func watchAssistantModel() {
+        guard assistantWatcher == nil else { return }
+        assistantWatcher = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                guard let self else { return }
+                await self.assistantModel.unloadIfIdle(for: Self.assistantIdleTimeout)
+            }
+        }
+    }
+
+    static let assistantIdleTimeout = Duration.seconds(15 * 60)
 
     /// Asks GitHub for the newest release, and — when there is one — works out whether this build
     /// can install it.

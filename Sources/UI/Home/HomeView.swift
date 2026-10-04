@@ -255,6 +255,7 @@ private extension DictationController.Phase {
         case .listening: "Listening…"
         case .transcribing: "Transcribing…"
         case .formatting: "Cleaning up…"
+        case .answering: "Writing…"
         case .idle, .failed: nil
         }
     }

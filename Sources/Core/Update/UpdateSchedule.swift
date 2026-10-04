@@ -7,8 +7,8 @@ import Foundation
 /// reaches anyone who uses the Mac within a day of it shipping, GitHub's limit for unauthenticated
 /// callers (60 an hour per address, shared by everyone behind the same router) is nowhere near, and
 /// nothing is checked often enough to be a pulse. It is also what Sparkle, the usual answer on the
-/// Mac, does. Releases here land on every merge, so a shorter interval would find more of them —
-/// but nobody needs an update within hours, and the Check button in Configuration is one press.
+/// Mac, does. Releases here are cut by hand, so a shorter interval would mostly find nothing; nobody
+/// needs an update within hours, and the Check button in Configuration is one press.
 ///
 /// The wait is measured on a clock that keeps counting while the Mac sleeps, so a check that came
 /// due overnight fires the moment the lid opens — when Wi-Fi may not be back yet. A failed check is

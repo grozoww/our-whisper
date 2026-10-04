@@ -76,18 +76,16 @@ command -v curl >/dev/null 2>&1 || die "curl is required."
 
 # MARK: - Find the download
 #
-# Asked two ways, because neither alone is reliable.
+# /releases/latest is the only question asked, and it is the right one: not a draft, not a
+# prerelease, the one GitHub itself calls latest. That is what keeps a build from a branch away from
+# anyone who did not ask for it — every release not cut from main is a prerelease. There used to be
+# a fallback that read the whole list and took the highest version out of it, for the days when
+# /releases/latest 404ed because every release was a prerelease. It would now install a branch
+# build the moment /releases/latest failed, and it is gone.
 #
-# /releases/latest is the right question, and GitHub answers it correctly: not a draft, not a
-# prerelease, most recently published. It 404s when *every* release is a prerelease, which was the
-# state this project was in for its whole life and what made the app's update check go quiet. Only
-# a workflow_dispatch rehearsal is a prerelease now, so this is the ordinary path again.
-#
-# The list is the fallback, and the order GitHub returns it in must not be trusted. That order is
-# not newest-first and does not match id, created_at or published_at — asked today it puts v1.0.8
-# ahead of 1.0.9, 1.0.10 and 1.0.7. Taking the first DMG in the response is what installed 1.0.8
-# over 1.0.10 for anyone who ran this script. So the version is read out of each DMG's own
-# filename and the highest one wins, which relies on nothing GitHub promises.
+# The DMG is still chosen by the version in its filename rather than by position: the order GitHub
+# returns things in is not newest-first and matches no field it exposes, and `sort -V` is what puts
+# 1.0.10 above 1.0.9.
 #
 # Parsed with grep and sed rather than jq, because jq is not on a stock Mac and this script has to
 # run on one.
@@ -124,18 +122,10 @@ if [ -n "$VERSION" ]; then
   # One release, so there is nothing to choose between.
   DMG_URL="$(dmg_urls "$RELEASE" | head -1 || true)"
 else
-  # No -S here, unlike everywhere else: a 404 from this one is the expected fallback, not a fault,
-  # and letting curl print "error: 404" before the script quietly recovers reads like a failure.
-  RELEASE="$(curl -fsL -H 'Accept: application/vnd.github+json' \
-    "https://api.github.com/repos/$REPO/releases/latest" || true)"
+  RELEASE="$(curl -fsSL -H 'Accept: application/vnd.github+json' \
+    "https://api.github.com/repos/$REPO/releases/latest")" \
+    || die "Could not read the latest release from the GitHub API. Check your connection — or there is no release yet. See https://github.com/$REPO/releases"
   DMG_URL="$(newest_dmg "$RELEASE")"
-
-  if [ -z "$DMG_URL" ]; then
-    RELEASE="$(curl -fsSL -H 'Accept: application/vnd.github+json' \
-      "https://api.github.com/repos/$REPO/releases?per_page=100")" \
-      || die "Could not reach the GitHub releases API. Check your connection, or download the DMG by hand from https://github.com/$REPO/releases"
-    DMG_URL="$(newest_dmg "$RELEASE")"
-  fi
 fi
 
 [ -n "$DMG_URL" ] || die "No DMG found in the releases for $REPO${VERSION:+ at $VERSION}. See https://github.com/$REPO/releases"

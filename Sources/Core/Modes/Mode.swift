@@ -1,6 +1,24 @@
 import Foundation
 
-/// A named way of cleaning up what you said.
+/// What a mode does with what you say.
+enum ModeKind: String, Codable, CaseIterable, Identifiable, Sendable {
+    /// Cleans up what you said, and types it. Everything a mode was until the assistant.
+    case dictation
+    /// Treats what you said as a request, and types the model's answer to it. What you had copied
+    /// is the material the request is about. See `OnDeviceRefiner.answer`.
+    case assistant
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .dictation: "Cleans up what you say"
+        case .assistant: "Answers what you say"
+        }
+    }
+}
+
+/// A named way of cleaning up what you said — or, for an assistant mode, of answering it.
 ///
 /// The same sentence wants different treatment depending on where it lands. Dictating a commit
 /// message wants the filler gone and nothing else touched; dictating an email wants full
@@ -12,9 +30,21 @@ struct Mode: Codable, Identifiable, Equatable, Sendable {
     var symbol: String
     var tint: ModeColor = .blue
 
+    /// A new field on a persisted type, so `init(from:)` below carries it with a default: a modes
+    /// file written before the assistant existed has no `kind`, and every mode in it is a
+    /// dictation mode. A kind this version does not know — a newer file — reads as one too.
+    var kind: ModeKind = .dictation
+
     /// Passed to the on-device model as its system instructions. Ignored when the model is off,
-    /// which is why the rule toggles below are not merely a subset of it.
+    /// which is why the rule toggles below are not merely a subset of it. For an assistant mode
+    /// this is the assistant's character: "you write replies for a support desk, short and warm".
     var instructions: String
+
+    /// Assistant modes only: let the model think before it answers. Better for a summary or
+    /// anything that needs working out, and it costs seconds — the model writes its reasoning at
+    /// about the speed it writes an answer. Off by default, and a per-mode switch because the mode
+    /// that rewrites a sentence does not want it and the one that reads a contract does.
+    var thinks: Bool = false
 
     var cleanup: CleanupOptions = CleanupOptions()
 
@@ -48,8 +78,11 @@ struct Mode: Codable, Identifiable, Equatable, Sendable {
     /// nothing to dictate into.
     var isBuiltIn: Bool = false
 
+    /// An assistant mode is never claimed by an app. It sends what you copied to a model and types
+    /// what comes back, which is not something to start doing because you switched windows — it is
+    /// chosen, from the menu, and stays chosen.
     func claims(bundleID: String?) -> Bool {
-        guard let bundleID else { return false }
+        guard kind == .dictation, let bundleID else { return false }
         return appBundleIDs.contains { $0.caseInsensitiveCompare(bundleID) == .orderedSame }
     }
 }
@@ -82,6 +115,39 @@ struct CleanupOptions: Codable, Equatable, Sendable {
 }
 
 extension Mode {
+    /// The shipped assistant. Copy something, hold the key, say what you want done to it.
+    ///
+    /// No app bindings — see `claims(bundleID:)` — so "Switch by app" can never pick it by
+    /// surprise. Its cleanup is only what makes a *request* read well: fillers and false starts out,
+    /// vocabulary applied, and nothing that would rewrite the words of an instruction.
+    static let ask = Mode(
+        id: UUID(uuidString: "00000000-0000-0000-0000-00000000A006")!,
+        name: "Ask",
+        symbol: "wand.and.stars",
+        tint: .violet,
+        kind: .assistant,
+        instructions: assistantInstructions,
+        cleanup: CleanupOptions(
+            removeFillers: true,
+            resolveSelfCorrections: true,
+            spokenPunctuation: false,
+            sentenceCase: false,
+            applyVocabulary: true,
+            tidyWhitespace: true
+        ),
+        isBuiltIn: true
+    )
+
+    /// What an assistant mode is told when it is made, and what "Ask" ships with. Tuned with
+    /// `./scripts/eval-assistant.sh`, like the prompt it sits beside.
+    static let assistantInstructions = """
+        You are a writing assistant working inside whatever text field the person is typing in. \
+        They say what they want done, and you do it to the text they copied, if there is any. \
+        Answer in the language of the request unless it asks for another. Write only the text \
+        itself — no preamble, no quotation marks, no explanation of what you did, and no markdown \
+        unless it was asked for.
+        """
+
     /// Shipped modes. Deliberately few: five is a menu, fifteen is a chore.
     static var builtIns: [Mode] {
         [
@@ -166,6 +232,7 @@ extension Mode {
                 cleanup: .none,
                 isBuiltIn: true
             ),
+            ask,
         ]
     }
 }
@@ -182,7 +249,9 @@ extension Mode {
         name = container.value(.name, or: defaults.name)
         symbol = container.value(.symbol, or: defaults.symbol)
         tint = container.value(.tint, or: defaults.tint)
+        kind = container.value(.kind, or: defaults.kind)
         instructions = container.value(.instructions, or: defaults.instructions)
+        thinks = container.value(.thinks, or: defaults.thinks)
         cleanup = container.value(.cleanup, or: defaults.cleanup)
         usesClipboardContext = container.value(.usesClipboardContext, or: defaults.usesClipboardContext)
         pastesClipboard = container.value(.pastesClipboard, or: defaults.pastesClipboard)

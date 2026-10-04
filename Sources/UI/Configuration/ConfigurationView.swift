@@ -145,7 +145,7 @@ struct ConfigurationView: View {
                 SettingsRow(
                     symbol: "list.bullet",
                     title: "Mode",
-                    detail: "Used when no mode claims the focused app."
+                    detail: "Used when no mode claims the focused app. An assistant mode is never claimed by an app, so this and the menu bar are where one is chosen."
                 ) {
                     Picker("Mode", selection: $settings.settings.refinement.activeModeID) {
                         ForEach(appState.modes.modes) { mode in
@@ -225,6 +225,21 @@ struct ConfigurationView: View {
                     detail: "Off leaves only the menu bar icon to show that recording is live."
                 ) {
                     Toggle("", isOn: $settings.settings.appearance.showPill).toggleStyle(.switch)
+                }
+                RowDivider()
+                SettingsRow(
+                    symbol: "rectangle.and.hand.point.up.left",
+                    title: "Pill style",
+                    detail: "Small is the capsule with the level bars. With modes, the capsule opens into a larger window while you speak, with every mode in it — click one to use it for this dictation only."
+                ) {
+                    Picker("Pill style", selection: $settings.settings.appearance.pillStyle) {
+                        ForEach(PillStyle.allCases) { style in
+                            Text(style.title).tag(style)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 190)
+                    .disabled(!settings.settings.appearance.showPill)
                 }
                 RowDivider()
                 SettingsRow(

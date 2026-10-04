@@ -19,8 +19,13 @@ final class RefinementPipeline {
     private let log = Logger(subsystem: "com.grozoww.ourwhisper", category: "refine")
     private let onDevice: OnDeviceRefiner
 
-    init(onDevice: OnDeviceRefiner) {
+    /// The assistant modes' model, a different file from cleanup's. Nil only where nothing needs
+    /// it — most of the tests — and then an assistant mode has no answer to give.
+    let assistant: OnDeviceRefiner?
+
+    init(onDevice: OnDeviceRefiner, assistant: OnDeviceRefiner? = nil) {
         self.onDevice = onDevice
+        self.assistant = assistant
     }
 
     /// `clipboard` is what the user had copied when they started speaking, or nil when nothing
@@ -91,6 +96,86 @@ final class RefinementPipeline {
 
         log.debug("Refined with the on-device model")
         return Result(text: final, usedModel: true)
+    }
+
+    /// What an assistant mode makes of one dictation.
+    struct AssistantResult: Equatable, Sendable {
+        var text: String
+        /// The clipboard was longer than `ClipboardContext.materialLimit` and the model read the
+        /// first part of it.
+        var materialWasCut: Bool
+        /// The answer ran into its token limit and stops early.
+        var answerWasCut: Bool
+        var stats: LlamaEngine.Stats?
+    }
+
+    /// The assistant's version of `refine`: `raw` is a request, `material` is what it is about.
+    ///
+    /// Rules clean the *request* — fillers, false starts, the vocabulary list, so a name spoken as
+    /// it sounds is spelled the way it is written — and nothing touches the answer. In particular
+    /// the vocabulary is not applied after the model, which is what `refine` does and is right
+    /// there: an assistant's answer restates the material, the material is text somebody else
+    /// wrote, and a substitution list rewriting it would change what was copied.
+    ///
+    /// Throws `OnDeviceRefiner.AnswerFailure`, and `CancellationError` when the person pressed
+    /// Escape. Unlike `refine` there is no softer output to fall back on.
+    func answer(
+        _ raw: String,
+        mode: Mode,
+        vocabulary: [VocabularyEntry],
+        language: SpeechLanguage,
+        material: String?,
+        sampling: LlamaEngine.Sampling = .assistant
+    ) async throws -> AssistantResult {
+        guard let assistant else {
+            throw OnDeviceRefiner.AnswerFailure.notReady("The assistant model is not set up.")
+        }
+
+        let request = RuleRefiner(options: mode.cleanup, vocabulary: vocabulary, language: language).refine(raw)
+        guard !request.isEmpty else { throw OnDeviceRefiner.AnswerFailure.emptyRequest }
+
+        let capped = material.map(ClipboardContext.material)
+        let answer = try await assistant.answer(
+            to: request,
+            material: capped?.text,
+            materialWasCut: capped?.wasCut ?? false,
+            instructions: mode.instructions,
+            thinks: mode.thinks,
+            sampling: sampling
+        )
+        return AssistantResult(
+            text: answer.text,
+            materialWasCut: capped?.wasCut ?? false,
+            answerWasCut: answer.wasCut,
+            stats: answer.stats
+        )
+    }
+
+    /// Whether an assistant mode could answer without a download: the model is on this Mac, loaded
+    /// or loadable. Decides whether the clipboard is read at all, like `modelIsEnabled` does for
+    /// dictation — reading it for a feature that cannot run would be touching it for nothing.
+    var assistantMayRun: Bool {
+        guard let assistant else { return false }
+        return Self.mayRun(assistant.availability)
+    }
+
+    nonisolated static func mayRun(_ availability: OnDeviceRefiner.Availability) -> Bool {
+        switch availability.assistantGate {
+        case .ready, .loadFirst: true
+        case .blocked: false
+        }
+    }
+
+    var assistantGate: OnDeviceRefiner.Availability.AssistantGate {
+        assistant?.availability.assistantGate ?? .blocked("The assistant model is not set up.")
+    }
+
+    /// Reads the assistant's model back into memory if it was freed, and does nothing otherwise.
+    /// Never downloads: a file that is not there is `blocked`, and a 4.6 GB fetch is not something
+    /// to start from a hotkey press.
+    func warmUpAssistant() async {
+        guard let assistant, assistant.availability.assistantGate == .loadFirst else { return }
+        await assistant.prepare()
     }
 
     /// Gets the clipboard lookup ready. See `OnDeviceRefiner.warmUpClipboardLookup`.

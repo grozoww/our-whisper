@@ -24,6 +24,11 @@ actor LlamaEngine {
     /// at the full size.
     static let lookupContextLength: UInt32 = 4096
 
+    /// The assistant's prompt is a request and up to `ClipboardContext.materialLimit` characters of
+    /// material, and what it writes can be as long again — plus, when it thinks, a thought that is
+    /// often longer than the answer. Six thousand characters of Russian is about 2,500 tokens.
+    static let assistantContextLength: UInt32 = 8192
+
     private let queue = DispatchSerialQueue(label: "com.grozoww.ourwhisper.llama", qos: .userInitiated)
     nonisolated var unownedExecutor: UnownedSerialExecutor { queue.asUnownedSerialExecutor() }
 
@@ -38,18 +43,61 @@ actor LlamaEngine {
     enum Slot: Hashable {
         case cleanup
         case lookup
+        /// The assistant mode's own context, on its own model: it is the only slot of an engine
+        /// that loaded the larger file, because that file is never used for cleanup.
+        case assistant
 
         var contextLength: UInt32 {
             switch self {
             case .cleanup: LlamaEngine.contextLength
             case .lookup: LlamaEngine.lookupContextLength
+            case .assistant: LlamaEngine.assistantContextLength
             }
         }
     }
 
+    /// How the next token is picked.
+    ///
+    /// Greedy for everything that cleans or classifies: the same sentence has to come out the same
+    /// way twice, and a model that paraphrases differently on each press is unusable for dictation.
+    /// The assistant samples, so that saying the same request again can give a different answer —
+    /// the only retry there is for "reply to this" or "rewrite this", where the first try can be
+    /// right and not to taste.
+    ///
+    /// It was measured rather than assumed, on 34 requests in English, Russian and Ukrainian, three
+    /// seeds each: greedy, 1.0 (Google's recommendation), 0.6 and 0.3 all produced nothing that
+    /// must never ship, and the few misses were the same summary leaving out the same figure under
+    /// every setting. Greedy did not loop on the 200-word writing, which is what the model card
+    /// warns about. So the setting is a choice about retries and not about quality, and 0.6 is
+    /// steadier than 1.0 while still giving a different answer the second time.
+    enum Sampling: Equatable, Sendable {
+        case greedy
+        /// `seed` nil is a fresh one each call. Fixed only by the eval, so a score can be repeated.
+        case sampled(temperature: Float, topP: Float, topK: Int32, seed: UInt32?)
+
+        static let assistantTemperature: Float = 0.6
+
+        /// Google's `top_p=0.95, top_k=64`, at a lower temperature than the `1.0` they give.
+        static let assistant = Sampling.sampled(temperature: assistantTemperature, topP: 0.95, topK: 64, seed: nil)
+    }
+
+    /// What the last `generate` cost, in the two numbers that decide whether a model is usable:
+    /// how long before the first word, and how fast the words come. Never the text — what was
+    /// said to the model is not something this app logs, see `OnDeviceRefiner`.
+    struct Stats: Equatable, Sendable {
+        /// Tokens in the whole prompt, and how many of them the context already held.
+        var promptTokens: Int
+        var reusedTokens: Int
+        var generatedTokens: Int
+        /// Reading the prompt — everything before the first token of the answer exists.
+        var prefill: Double
+        var decode: Double
+
+        var tokensPerSecond: Double { decode > 0 ? Double(generatedTokens) / decode : 0 }
+    }
+
     private struct Session {
         let context: OpaquePointer
-        let sampler: UnsafeMutablePointer<llama_sampler>
         /// What the context holds from the last prompt. Empty whenever it cannot be trusted — at
         /// the start of a call, and after any failure — so a half-finished call can only cost a
         /// full re-read, never a wrong answer.
@@ -59,9 +107,16 @@ actor LlamaEngine {
     private var model: OpaquePointer?
     private var sessions: [Slot: Session] = [:]
 
+    /// Set by every `generate` that gets as far as writing. A property rather than a return value
+    /// so the callers that do not care — nearly all of them — are not changed.
+    private(set) var lastStats: Stats?
+
     var isLoaded: Bool { model != nil }
 
-    func load(from url: URL) throws {
+    /// - Parameter slot: The context made now, and used for the warm-up. Cleanup for the model
+    ///   that cleans; the assistant's engine has no use for a cleanup context and is not charged
+    ///   for one — about 200 MB.
+    func load(from url: URL, slot: Slot = .cleanup) throws {
         guard model == nil else { return }
 
         _ = Self.initialiseBackend
@@ -70,23 +125,23 @@ actor LlamaEngine {
         // costs no copy of the weights.
         modelParameters.n_gpu_layers = 999
         guard let model = llama_model_load_from_file(url.path(percentEncoded: false), modelParameters) else {
-            throw Failure(message: "The cleanup model could not be loaded. Remove it in Models and download it again.")
+            throw Failure(message: "The language model could not be loaded. Remove it in Models and download it again.")
         }
 
-        let cleanup: Session
+        let first: Session
         do {
-            cleanup = try Self.makeSession(on: model, slot: .cleanup)
+            first = try Self.makeSession(on: model, slot: slot)
         } catch {
             llama_model_free(model)
             throw error
         }
 
         self.model = model
-        self.sessions = [.cleanup: cleanup]
+        self.sessions = [slot: first]
 
         // The first decode compiles the Metal kernels, about half a second on an M1 Max. Paid
         // here, at launch, rather than by the first dictation.
-        _ = try? generate([PromptSegment(text: "Hi", isMarkup: false)], maxTokens: 1)
+        _ = try? generate([PromptSegment(text: "Hi", isMarkup: false)], maxTokens: 1, in: slot)
     }
 
     /// Runs the prompt and returns what the model wrote, stopping at its end-of-turn token or at
@@ -100,19 +155,25 @@ actor LlamaEngine {
     /// With `reusingStart`, whatever the context already holds of this prompt's beginning is kept
     /// and only the rest is read. Off for cleanup, whose start is the mode's instructions and a
     /// hundred tokens; on for the lookup, whose start is the examples and a thousand.
+    ///
+    /// With `keepsChannels`, the control tokens that fence the model's thinking are written out
+    /// instead of dropped. Dropped, a thought runs straight into the answer with nothing to say
+    /// where it stops, and an *empty* thought — which a model that was not asked to think can still
+    /// open — leaves the word "thought" at the head of the answer. The caller takes them out.
     func generate(
         _ segments: [PromptSegment],
         maxTokens: Int,
         in slot: Slot = .cleanup,
-        reusingStart: Bool = false
+        reusingStart: Bool = false,
+        sampling: Sampling = .greedy,
+        keepsChannels: Bool = false
     ) throws -> String {
         guard let model else {
-            throw Failure(message: "The cleanup model is not loaded.")
+            throw Failure(message: "The language model is not loaded.")
         }
         var session = try sessions[slot] ?? Self.makeSession(on: model, slot: slot)
         let vocab = llama_model_get_vocab(model)
         let context = session.context
-        let sampler = session.sampler
 
         var prompt: [llama_token] = []
         for (index, segment) in segments.enumerated() {
@@ -121,8 +182,13 @@ actor LlamaEngine {
 
         let room = Int(slot.contextLength) - prompt.count
         guard room > 16 else {
-            throw Failure(message: "The transcript is too long for the cleanup model.")
+            throw Failure(message: "That is too long for the language model.")
         }
+
+        guard let sampler = Self.makeSampler(sampling) else {
+            throw Failure(message: "The language model loaded but could not start. Restart OurWhisper and try again.")
+        }
+        defer { llama_sampler_free(sampler) }
 
         // Distrusted until the prompt has been read in full.
         let held = session.cached
@@ -142,27 +208,42 @@ actor LlamaEngine {
             llama_memory_clear(memory, true)
             reused = 0
         }
-        llama_sampler_reset(sampler)
 
+        let begun = ContinuousClock.now
         let unread = Array(prompt[reused...])
         let status = unread.withUnsafeBufferPointer {
             llama_decode(context, llama_batch_get_one(UnsafeMutablePointer(mutating: $0.baseAddress), Int32($0.count)))
         }
-        guard status == 0 else { throw Failure(message: "The cleanup model failed to read the prompt (\(status)).") }
+        guard status == 0 else { throw Failure(message: "The language model failed to read the prompt (\(status)).") }
         session.cached = prompt
         sessions[slot] = session
+        let read = ContinuousClock.now
 
         var output: [UInt8] = []
+        var generated = 0
         for _ in 0..<min(maxTokens, room) {
             try Task.checkCancellation()
             var token = llama_sampler_sample(sampler, context, -1)
             if llama_vocab_is_eog(vocab, token) { break }
-            output += Self.piece(token, vocab: vocab)
+            output += Self.piece(token, vocab: vocab, special: keepsChannels)
+            generated += 1
             guard llama_decode(context, llama_batch_get_one(&token, 1)) == 0 else {
-                throw Failure(message: "The cleanup model failed while writing.")
+                throw Failure(message: "The language model failed while writing.")
             }
         }
+
+        lastStats = Stats(
+            promptTokens: prompt.count,
+            reusedTokens: reused,
+            generatedTokens: generated,
+            prefill: Self.seconds(read - begun),
+            decode: Self.seconds(ContinuousClock.now - read)
+        )
         return String(decoding: output, as: UTF8.self)
+    }
+
+    private static func seconds(_ duration: Duration) -> Double {
+        Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
     }
 
     private static func makeSession(on model: OpaquePointer, slot: Slot) throws -> Session {
@@ -170,22 +251,30 @@ actor LlamaEngine {
         contextParameters.n_ctx = slot.contextLength
         contextParameters.n_batch = slot.contextLength
         guard let context = llama_init_from_model(model, contextParameters) else {
-            throw Failure(message: "The cleanup model loaded but could not start. Restart OurWhisper and try again.")
+            throw Failure(message: "The language model loaded but could not start. Restart OurWhisper and try again.")
         }
+        return Session(context: context)
+    }
 
-        // Greedy: the same sentence must clean up the same way twice. A model that paraphrases
-        // differently on each press is unusable for dictation.
-        guard let sampler = llama_sampler_chain_init(llama_sampler_chain_default_params()) else {
-            llama_free(context)
-            throw Failure(message: "The cleanup model loaded but could not start. Restart OurWhisper and try again.")
+    /// Made for each generation and freed after it, not kept in the session: how to pick the next
+    /// token is a property of the call — the assistant wants to sample and the cleanup wants the
+    /// same answer twice — and a sampler is a few bytes.
+    private static func makeSampler(_ sampling: Sampling) -> UnsafeMutablePointer<llama_sampler>? {
+        guard let chain = llama_sampler_chain_init(llama_sampler_chain_default_params()) else { return nil }
+        switch sampling {
+        case .greedy:
+            llama_sampler_chain_add(chain, llama_sampler_init_greedy())
+        case .sampled(let temperature, let topP, let topK, let seed):
+            llama_sampler_chain_add(chain, llama_sampler_init_top_k(topK))
+            llama_sampler_chain_add(chain, llama_sampler_init_top_p(topP, 1))
+            llama_sampler_chain_add(chain, llama_sampler_init_temp(temperature))
+            llama_sampler_chain_add(chain, llama_sampler_init_dist(seed ?? UInt32.random(in: 0...UInt32.max)))
         }
-        llama_sampler_chain_add(sampler, llama_sampler_init_greedy())
-        return Session(context: context, sampler: sampler)
+        return chain
     }
 
     private static func free(_ sessions: Dictionary<Slot, Session>.Values) {
         for session in sessions {
-            llama_sampler_free(session.sampler)
             llama_free(session.context)
         }
     }
@@ -227,9 +316,9 @@ actor LlamaEngine {
     /// Bytes rather than a string, because a multi-byte character — every Cyrillic letter — can
     /// be split across two tokens, and decoding each half on its own would leave two replacement
     /// characters where one letter should be.
-    private static func piece(_ token: llama_token, vocab: OpaquePointer?) -> [UInt8] {
+    private static func piece(_ token: llama_token, vocab: OpaquePointer?, special: Bool = false) -> [UInt8] {
         var buffer = [CChar](repeating: 0, count: 64)
-        let count = llama_token_to_piece(vocab, token, &buffer, Int32(buffer.count), 0, false)
+        let count = llama_token_to_piece(vocab, token, &buffer, Int32(buffer.count), 0, special)
         return buffer.prefix(Int(max(count, 0))).map { UInt8(bitPattern: $0) }
     }
 

@@ -13,8 +13,14 @@ final class SettingsStore {
         didSet {
             guard settings != oldValue else { return }
             file.save(settings)
+            onChange?(oldValue, settings)
         }
     }
+
+    /// Told what changed, once the change is saved. For the few things that have to *happen* when
+    /// a setting moves — choosing an assistant mode loads its model — and cannot be left to
+    /// whichever screen made the change, because the menu bar and Configuration both change it.
+    @ObservationIgnored var onChange: ((_ old: Settings, _ new: Settings) -> Void)?
 
     @ObservationIgnored private let file: JSONFileStore<Settings>
 

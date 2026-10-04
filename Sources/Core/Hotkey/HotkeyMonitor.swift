@@ -25,6 +25,10 @@ final class HotkeyMonitor {
     /// Set while recording so Escape is swallowed instead of reaching the focused app.
     var isRecording = false
 
+    /// Set while an assistant mode is writing, for the same reason: Escape stops the answer, and
+    /// should not also close whatever dialog the person is looking at.
+    var isAnswering = false
+
     private let log = Logger(subsystem: "com.grozoww.ourwhisper", category: "hotkey")
 
     private var tap: CFMachPort?
@@ -204,7 +208,7 @@ final class HotkeyMonitor {
     private func handleKeyDown(keyCode: CGKeyCode, flags: CGEventFlags) -> Decision {
         let escape: CGKeyCode = 53
 
-        if isRecording, keyCode == escape, flags.intersection(HotkeyChord.significantFlags).isEmpty {
+        if isRecording || isAnswering, keyCode == escape, flags.intersection(HotkeyChord.significantFlags).isEmpty {
             onEvent?(.cancel)
             return .consume // so Escape does not also dismiss something in the focused app
         }

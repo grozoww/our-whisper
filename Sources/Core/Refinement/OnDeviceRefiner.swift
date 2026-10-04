@@ -47,10 +47,17 @@ final class OnDeviceRefiner {
         }
     }
 
-    static let model = CleanupModel.gemma4E2B
+    /// The model that cleans dictation. The assistant has a model of its own, passed to `init`.
+    static let cleanupModel = CleanupModel.gemma4E2B
 
-    private let log = Logger(subsystem: "com.grozoww.ourwhisper", category: "refine")
-    private let engine = LlamaEngine()
+    let model: CleanupModel
+    /// The one context this refiner's engine makes at load: the cleanup model's cleanup context, the
+    /// assistant model's assistant context.
+    let slot: LlamaEngine.Slot
+
+    let log = Logger(subsystem: "com.grozoww.ourwhisper", category: "refine")
+    /// Internal, not private, for the assistant's half of this type in its own file.
+    let engine = LlamaEngine()
     private let http: any HTTPClient
     private let directory: URL
 
@@ -61,6 +68,10 @@ final class OnDeviceRefiner {
     /// warm-up is a no-op rather than a quarter of a second of GPU on every key press.
     private var lookupIsWarm = false
 
+    /// When the model was last asked for something, or finished loading. What "not used for a
+    /// while" is measured from — see `unloadIfIdle`.
+    private(set) var lastUsed: Date?
+
     /// The one download-and-load in flight. Launch, the Configuration switch and the Models screen
     /// can all ask at once, and a second 2.8 GB download of the same file helps nobody.
     private var preparing: Task<Void, Never>?
@@ -70,19 +81,23 @@ final class OnDeviceRefiner {
     /// - Parameter availability: Only for tests that need a screen in the middle of a download or
     ///   a load, which would otherwise take 2.8 GB to reach. Production reads the disk.
     init(
+        model: CleanupModel = OnDeviceRefiner.cleanupModel,
+        slot: LlamaEngine.Slot = .cleanup,
         directory: URL = AppDirectories.languageModels,
         http: any HTTPClient = URLSessionHTTPClient(),
         availability: Availability? = nil
     ) {
+        self.model = model
+        self.slot = slot
         self.directory = directory
         self.http = http
         self.availability = availability
-            ?? (FileManager.default.fileExists(atPath: Self.model.location(in: directory).path(percentEncoded: false))
+            ?? (FileManager.default.fileExists(atPath: model.location(in: directory).path(percentEncoded: false))
                 ? .downloaded
                 : .notDownloaded)
     }
 
-    var fileURL: URL { Self.model.location(in: directory) }
+    var fileURL: URL { model.location(in: directory) }
 
     // MARK: - Lifecycle
 
@@ -110,8 +125,8 @@ final class OnDeviceRefiner {
         do {
             if !FileManager.default.fileExists(atPath: file.path(percentEncoded: false)) {
                 availability = .downloading(0)
-                log.info("Downloading \(Self.model.name, privacy: .public)")
-                try await Self.model.download(to: file, using: http) { [weak self] fraction in
+                log.info("Downloading \(self.model.name, privacy: .public)")
+                try await model.download(to: file, using: http) { [weak self] fraction in
                     Task { @MainActor in
                         // Only forwards, and only whole percents: the hops arrive in any order,
                         // and a re-render per megabyte is 2,800 of them.
@@ -125,13 +140,14 @@ final class OnDeviceRefiner {
             // is only seen here — before 2.8 GB is mapped for nothing.
             try Task.checkCancellation()
             availability = .loading
-            try await engine.load(from: file)
+            try await engine.load(from: file, slot: slot)
             // The load is a C call and cannot be interrupted, so a switch turned off while it ran is
             // only noticed here. Without this the model finished loading and `availability` said
             // "available" for an engine that `unload()` had already emptied.
             try Task.checkCancellation()
             availability = .available
-            log.info("\(Self.model.name, privacy: .public) ready")
+            noteUse()
+            log.info("\(self.model.name, privacy: .public) ready")
         } catch {
             // A cancelled download surfaces as `URLError.cancelled` as often as `CancellationError`,
             // and either way it is the user's decision rather than a failure to show them.
@@ -142,9 +158,30 @@ final class OnDeviceRefiner {
                 availability = FileManager.default.fileExists(atPath: file.path(percentEncoded: false)) ? .downloaded : .notDownloaded
                 return
             }
-            log.error("Cleanup model unavailable: \(error.localizedDescription, privacy: .public)")
-            availability = .failed("Gemma 4 could not be set up: \(error.localizedDescription) It tries again at the next launch.")
+            log.error("\(self.model.name, privacy: .public) unavailable: \(error.localizedDescription, privacy: .public)")
+            availability = .failed("\(model.name) could not be set up: \(error.localizedDescription) It tries again at the next launch.")
         }
+    }
+
+    func noteUse() {
+        lastUsed = Date()
+    }
+
+    /// Frees the memory, keeps the file, and says whether it did — when the model is loaded and has
+    /// not been used for `interval`.
+    ///
+    /// For the assistant's model, which is 4.6 GB of weights mapped for a feature somebody uses a
+    /// few times a day, and which a second load brings back in seconds. The cleanup model never
+    /// leaves: dictation is the app, and a first sentence that waits on a load is the failure
+    /// loading at launch exists to prevent. A model that is loading or downloading is never idle.
+    @discardableResult
+    func unloadIfIdle(for interval: Duration, now: Date = Date()) async -> Bool {
+        guard availability == .available, let lastUsed,
+              now.timeIntervalSince(lastUsed) >= Double(interval.components.seconds)
+        else { return false }
+        log.info("\(self.model.name, privacy: .public) idle; freeing its memory")
+        await unload()
+        return true
     }
 
     /// Frees the memory and keeps the file. What switching cleanup with Gemma off does.
@@ -164,7 +201,7 @@ final class OnDeviceRefiner {
         await engine.unload()
         try? FileManager.default.removeItem(at: fileURL)
         availability = .notDownloaded
-        log.info("\(Self.model.name, privacy: .public) removed")
+        log.info("\(self.model.name, privacy: .public) removed")
     }
 
     /// For `applicationWillTerminate`, which cannot await. See `LlamaEngine.shutdown`.
@@ -228,13 +265,18 @@ final class OnDeviceRefiner {
     /// formatter predates Gemma 4 and refuses it. The markup and the text are separate segments so
     /// that only the markup is ever read as control tokens — `prompt(for:)` keeps the model from
     /// *obeying* a transcript, and this keeps a transcript from *ending its own turn*.
+    ///
+    /// `thinking` is `<|think|>` at the top of the system turn, which is the whole of how the
+    /// template asks for it — read from the model file's own template. The model then writes
+    /// `<|channel>thought\n…<channel|>` before the answer, which `thoughtRemoved(from:)` takes out.
     nonisolated static func segments(
         instructions: String,
         prompt: String,
-        examples: [Example] = []
+        examples: [Example] = [],
+        thinking: Bool = false
     ) -> [PromptSegment] {
         var segments = [
-            PromptSegment(text: "<|turn>system\n", isMarkup: true),
+            PromptSegment(text: thinking ? "<|turn>system\n<|think|>\n" : "<|turn>system\n", isMarkup: true),
             PromptSegment(text: instructions.trimmingCharacters(in: .whitespacesAndNewlines), isMarkup: false),
         ]
         for example in examples {
@@ -350,33 +392,64 @@ final class OnDeviceRefiner {
     /// sentence that only *mentions* it. Measured on 63 hand-labelled sentences and a further 35
     /// held out from tuning, 27 of 28 and 14 of 15 requests were found and none of the 55 others
     /// was. Change them with that in hand: this model moves a lot on small changes to them.
+    ///
+    /// Eight more, below the first twenty-six, are for the other languages Parakeet hears. The
+    /// lookup was never given an example in German, French, Spanish, Italian, Portuguese or
+    /// Dutch, and found the long natural phrasing in all of them anyway, but missed "paste what I
+    /// copied" said in five words — 10 of 16 on a set written for the purpose, 26 of 30 on a set
+    /// written afterwards, with nothing pasted wrongly in either.
     nonisolated static let requestExamples: [Example] = [
         ("Look at this log, paste what I copied, and tell me what is wrong.", "PASTE: paste what I copied"),
         ("Copy the link to the clipboard.", "COPY: Copy the link to the clipboard"),
         ("Вот ошибка, вставь то, что я скопировал, и скажи, что с ней.", "PASTE: вставь то, что я скопировал"),
         ("Скопируй эту ссылку в буфер обмена и отправь Ане.", "COPY: Скопируй эту ссылку в буфер обмена"),
         ("Paste the clipboard here.", "PASTE: Paste the clipboard here"),
-        ("Please paste the invoice number into the form.", "OTHER: paste the invoice number into the form"),
         ("Вставь то, что у меня в буфере.", "PASTE: Вставь то, что у меня в буфере"),
-        ("Вставь эту таблицу в презентацию, пожалуйста.", "OTHER: Вставь эту таблицу в презентацию"),
         ("Ось повідомлення, встав скопійоване й дай відповідь.", "PASTE: встав скопійоване"),
         ("Скопіюй цей текст у буфер обміну.", "COPY: Скопіюй цей текст у буфер обміну"),
         ("Here is the draft. Insert what is on my clipboard. Thanks.", "PASTE: Insert what is on my clipboard"),
         ("The sync is broken again, I will look at it tomorrow.", "NONE"),
         ("Вставь сюда, пожалуйста, то, что я скопировал.", "PASTE: Вставь сюда, пожалуйста, то, что я скопировал"),
-        ("Put the file on the shared drive.", "OTHER: Put the file on the shared drive"),
         ("Could you rewrite this, paste my clipboard, and make it shorter?", "PASTE: paste my clipboard"),
         ("Буфер обмена не очищается, надо разобраться.", "NONE"),
         ("Смотри, вставь буфер обмена, это письмо от клиента.", "PASTE: вставь буфер обмена"),
-        ("Положи файл в общую папку.", "OTHER: Положи файл в общую папку"),
-        ("Вставь новый заголовок в начало документа.", "OTHER: Вставь новый заголовок в начало документа"),
         ("Встав, будь ласка, те, що в буфері.", "PASTE: Встав, будь ласка, те, що в буфері"),
         ("Does the clipboard keep images too?", "NONE"),
-        ("Paste the chart into slide three and send me the deck.", "OTHER: Paste the chart into slide three"),
         ("Вставь содержимое буфера, пожалуйста.", "PASTE: Вставь содержимое буфера"),
         ("Я скопировал ссылку и отправлю её завтра.", "NONE"),
         ("Paste what is in the clipboard.", "PASTE: Paste what is in the clipboard"),
         ("Let us ship the new build on Friday.", "NONE"),
+        // The short, bare phrasing in the languages that had none — "Füg ein, was ich kopiert habe",
+        // "Colle ce que j'ai copié" — which was what the other languages missed: on the long natural
+        // phrasing they were already found. Measured, and not obvious, so read this before adding
+        // another (all against the 98 English/Russian/Ukrainian sentences, "false" = pasted into one
+        // that was not asking):
+        //   these six, last      40 of 43 found, 5 false of 55 — "Paste the logo into the header"
+        //                        was pasted: "Cole", "Colle" and "Plak" read as "Paste" to the model
+        //   the same, first      39 of 43, 0 false, and the other languages no better than before
+        //   six more, pairing each with "paste a thing somewhere" in its language, last
+        //                        40 of 43, 4 false
+        //   those pairs, then the English and Russian "paste a thing somewhere" examples after them
+        //                        39 of 43, 0 false
+        //   no pairs, the English and Russian ones last (below): 40 of 43, 0 false — the one that held.
+        // The two after the six are the balance: a request to copy, and a sentence that only mentions it.
+        ("Füge ein, was ich gerade kopiert habe.", "PASTE: Füge ein, was ich gerade kopiert habe"),
+        ("Colle ce que je viens de copier.", "PASTE: Colle ce que je viens de copier"),
+        ("Pega lo que tengo copiado.", "PASTE: Pega lo que tengo copiado"),
+        ("Incolla quello che ho appena copiato.", "PASTE: Incolla quello che ho appena copiato"),
+        ("Cole o que acabei de copiar.", "PASTE: Cole o que acabei de copiar"),
+        ("Plak wat ik net gekopieerd heb.", "PASTE: Plak wat ik net gekopieerd heb"),
+        ("Mets ce texte dans le presse-papiers.", "COPY: Mets ce texte dans le presse-papiers"),
+        ("Copié el enlace y lo enviaré mañana.", "NONE"),
+        // The English and Russian "paste a thing somewhere" examples, last: the model reads the
+        // nearest examples most, and these are what keep "Paste the header into the template" from
+        // being taken for a request for the clipboard.
+        ("Please paste the invoice number into the form.", "OTHER: paste the invoice number into the form"),
+        ("Вставь эту таблицу в презентацию, пожалуйста.", "OTHER: Вставь эту таблицу в презентацию"),
+        ("Put the file on the shared drive.", "OTHER: Put the file on the shared drive"),
+        ("Положи файл в общую папку.", "OTHER: Положи файл в общую папку"),
+        ("Вставь новый заголовок в начало документа.", "OTHER: Вставь новый заголовок в начало документа"),
+        ("Paste the chart into slide three and send me the deck.", "OTHER: Paste the chart into slide three"),
     ].map { Example(prompt: requestPrompt(for: $0), reply: $1) }
 
     /// What the model's answer says, if it can be trusted: `PASTE:` and then a non-empty run of
@@ -479,14 +552,14 @@ final class OnDeviceRefiner {
 
 // MARK: - Timeout
 
-private struct TimedOut: Error {}
+struct TimedOut: Error {}
 
 /// Races an operation against a deadline.
 ///
 /// The user is standing there with a pill on screen waiting to paste. An on-device model that
 /// takes a very long time on a cold start must not hold the text hostage — after the timeout the
 /// rule-cleaned version is pasted and the dictation completes.
-private func withTimeout<T: Sendable>(
+func withTimeout<T: Sendable>(
     _ duration: Duration,
     operation: @escaping @Sendable () async throws -> T
 ) async throws -> T {
