@@ -42,7 +42,12 @@ final class HotkeyMonitor {
     /// How long a modifier-only push-to-talk chord must be held before it counts, and the timer
     /// counting it. See `DictationSettings.pushToTalkHoldDelay` for why the wait exists.
     private var pushToTalkHoldDelay: Duration = .zero
-    private var pendingPressStart: Task<Void, Never>?
+
+    /// Readable so a test can wait on the timer itself. Waiting a fixed time instead failed on a
+    /// loaded CI runner, where the timer fired after the assertion had already looked. Take the
+    /// task *before* the release that cancels it: cancelling clears this property, and awaiting the
+    /// cancelled task is how a test proves the press never started.
+    private(set) var pendingPressStart: Task<Void, Never>?
 
     /// Whether the modifier-only chord was already fully held on the previous event. Without this
     /// every extra `flagsChanged` while the chord is held would re-fire the hotkey.
