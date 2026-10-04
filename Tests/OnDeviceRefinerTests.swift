@@ -13,7 +13,7 @@ struct OnDeviceRefinerTests {
     }
 
     private static let shortBody = "nowhere near 2.8 GB"
-    private static var fileName: String { OnDeviceRefiner.model.fileName }
+    private static var fileName: String { OnDeviceRefiner.cleanupModel.fileName }
 
     @Test("A download that comes up short is a failure that says what to expect, and leaves nothing behind")
     func failureIsExplainedAndClean() async throws {
@@ -71,7 +71,7 @@ struct OnDeviceRefinerTests {
     @Test("Removing deletes the file and goes back to not downloaded")
     func removes() async throws {
         let temp = TemporaryDirectory()
-        let file = OnDeviceRefiner.model.location(in: temp.url)
+        let file = OnDeviceRefiner.cleanupModel.location(in: temp.url)
         try Data("weights".utf8).write(to: file)
         let refiner = OnDeviceRefiner(directory: temp.url)
         #expect(refiner.availability == .downloaded)
@@ -85,7 +85,7 @@ struct OnDeviceRefinerTests {
     @Test("Switching it off keeps the file, so switching it back on is a load and not a download")
     func unloadKeepsTheFile() async throws {
         let temp = TemporaryDirectory()
-        let file = OnDeviceRefiner.model.location(in: temp.url)
+        let file = OnDeviceRefiner.cleanupModel.location(in: temp.url)
         try Data("weights".utf8).write(to: file)
         let refiner = OnDeviceRefiner(directory: temp.url)
 

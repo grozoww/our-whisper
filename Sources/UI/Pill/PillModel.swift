@@ -10,13 +10,17 @@ final class PillModel {
         case listening
         case transcribing
         case formatting
+        /// An assistant mode is writing its answer. Its own phase, not `formatting`: that one
+        /// means a sentence is being tidied, which takes a second, and this is a reply, which can
+        /// take thirty and has an Escape.
+        case answering
         case success(String)
         case failure(String)
 
         /// The stages where the user is waiting on something they cannot see. The pill animates
         /// through these so a slow model reads as working rather than as stuck.
         var isProcessing: Bool {
-            self == .transcribing || self == .formatting
+            self == .transcribing || self == .formatting || self == .answering
         }
     }
 

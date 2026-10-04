@@ -46,6 +46,8 @@ struct PillView: View {
             BusyLabel(text: "Transcribing", symbol: "waveform")
         case .formatting:
             BusyLabel(text: "Cleaning up", symbol: "sparkles")
+        case .answering:
+            BusyLabel(text: "Writing", symbol: "wand.and.stars")
         case .success(let target):
             HStack(spacing: 7) {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)

@@ -5,17 +5,41 @@ For the next agent. Written on 2026-10-04 by the agent that built the clipboard 
 lands" explains most of what is true about the on-device model. This file is what that section does
 not say: three pieces of work the owner asked for and nobody has started.
 
-**B (the icon picker) is built** — see the note at the top of that section. A and C are not. Where a
-number is given it was measured on an M1 Max with the real model, and the sentence says so. Where
-something is a recommendation, it says that.
+**B (the icon picker), A (the assistant mode) and C (the larger model) are built** — see the note
+at the top of each section for what differs from the brief; what is still open is the three
+questions at the end of A. Where a number is given it was measured on an M1 Max with the real model,
+and the sentence says so. Where something is a recommendation, it says that.
 
-Suggested order, one pull request each: **B** (icon picker — done), then **A** (the assistant mode),
-then **C** (the larger model, decided by measurement). C can come before A if you want A built on
-the model it will ship with.
+The assistant and the model went together in the end, in one pull request: the model is only ever
+loaded for the assistant, and the decision to ship it came from the assistant's own eval.
 
 ---
 
 ## A. An assistant mode: speak to the model, using the clipboard as material
+
+> **Built.** The design below was followed, with these differences and answers.
+>
+> - **Invocation: choose-the-mode-first.** The assistant is a mode like the others, chosen from the
+>   menu bar or Configuration, and is never claimed by an app. A dedicated hotkey is **not built**; it
+>   is real work in `HotkeyMonitor` (two chords are bound today and its callbacks run inside the event
+>   tap), and the mode switch is one click away.
+> - **Thinking is a per-mode switch, off by default, and the pill says "Writing" either way.** It was
+>   measured: the model hardly thinks on a one-line request and thinks 300–450 tokens (6–8 s) on a
+>   summary, so the cost arrives only when the task needs it. The slowest answer in any run was
+>   10.5 s against the 30 s timeout. No separate "Thinking…" state: the wait is a few seconds and
+>   Escape ends it.
+> - **Answering over a selection is not built.** It is a separate feature (Accessibility's
+>   `kAXSelectedTextAttribute`), and the paste replaces a selection already when one exists.
+> - **The answer is not checked against the material.** An answer equal to the material is allowed
+>   through, because "fix the grammar" of correct text returns it unchanged. The eval, which knows
+>   the request, checks `changed`.
+> - **Sampling is temperature 0.6**, not greedy and not Google's 1.0, chosen for retries; see
+>   `LlamaEngine.Sampling`. **No examples** in the prompt: zero-shot was enough.
+> - **No presets yet** (Summarise, Reply, Translate, Fix grammar), as the brief said to wait for "Ask"
+>   to have an eval first. It has one now, `scripts/assistant-cases.tsv`.
+> - The code is `OnDeviceRefiner+Assistant.swift`, `RefinementPipeline.answer`,
+>   `DictationController.answerAndInject`, `Mode.kind`, and the editor in `ModesView`. CLAUDE.md,
+>   "The assistant mode", has the reasoning.
 
 ### What the owner wants
 
@@ -282,6 +306,18 @@ same string the text field did. `Mode.init(from:)` needs no change.
 ---
 
 ## C. Which model
+
+> **Decided: E4B for the assistant, E2B for everything else.** Measured on `scripts/assistant-cases.tsv`
+> (34 requests, en/ru/uk): E4B 588 answers, nothing that must never ship in any configuration;
+> E2B 166 answers, and it typed the word planted in a Russian clipboard in 5 of 5 runs. Speed, M1 Max:
+> about 35 tokens a second against 55; cleanup plus the clipboard lookup 0.70 s against 0.42 s
+> median. The clipboard lookup on E4B: 42 of 43 found but 1 false paste of 55, against 41 and 0 on
+> E2B, so it stays on E2B — its examples were tuned there. E4B loads when an assistant mode is chosen
+> and is freed after fifteen minutes unused. Pinned the way the first is, in
+> `CleanupModel.gemma4E4B`. The multi-token-prediction draft file below was not investigated.
+>
+> The estimate below — "about 45 tokens a second, **an estimate, not a measurement**" — was too
+> optimistic: it is about 35.
 
 The owner asked whether Gemma 4 **E4B** would change things for the assistant mode. From Google's
 model card (`google/gemma-4-E4B-it` on Hugging Face), instruction-tuned, E2B → E4B:

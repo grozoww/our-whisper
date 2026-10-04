@@ -251,6 +251,10 @@ struct TintSwatches: View {
                 }
             }
         }
+        // A grid of shapes has no text, so its "first baseline" is the bottom of its last row, and
+        // the row's label lined up with the third row of chips. The middle of the first row is
+        // where a line of text beside it would sit.
+        .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.top] + 16 }
     }
 
     private func chip(_ option: ModeColor) -> some View {

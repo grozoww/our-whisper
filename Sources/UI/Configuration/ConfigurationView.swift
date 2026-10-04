@@ -145,7 +145,7 @@ struct ConfigurationView: View {
                 SettingsRow(
                     symbol: "list.bullet",
                     title: "Mode",
-                    detail: "Used when no mode claims the focused app."
+                    detail: "Used when no mode claims the focused app. An assistant mode is never claimed by an app, so this and the menu bar are where one is chosen."
                 ) {
                     Picker("Mode", selection: $settings.settings.refinement.activeModeID) {
                         ForEach(appState.modes.modes) { mode in

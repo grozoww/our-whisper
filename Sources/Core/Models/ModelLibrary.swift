@@ -61,6 +61,10 @@ final class ModelLibrary {
     /// progress here too.
     private let cleanup: OnDeviceRefiner
 
+    /// The assistant's model, owned the same way. Optional so the many tests that need a library
+    /// and have no use for it need not make one.
+    private let assistant: OnDeviceRefiner?
+
     /// Set by `AppState`. Downloading or removing the cleanup model here is also a decision about
     /// the switch in Configuration, and the two must not disagree: removing it while the switch is
     /// on would have the app fetch the 2.8 GB again at the next launch, and downloading it with the
@@ -82,11 +86,13 @@ final class ModelLibrary {
         parakeet: ParakeetProvider,
         speechModel: SpeechModelStatus,
         cleanup: OnDeviceRefiner,
+        assistant: OnDeviceRefiner? = nil,
         parakeetDirectory: URL = ModelLibrary.defaultParakeetDirectory
     ) {
         self.parakeet = parakeet
         self.speechModel = speechModel
         self.cleanup = cleanup
+        self.assistant = assistant
         self.parakeetDirectory = parakeetDirectory
     }
 
@@ -95,6 +101,7 @@ final class ModelLibrary {
     static let parakeetID = "parakeet-tdt-0.6b-v3"
     static let sonioxID = "soniox-cloud"
     static let gemmaID = "gemma-4-e2b-it"
+    static let assistantGemmaID = "gemma-4-e4b-it"
 
     var entries: [Entry] {
         [Self.parakeetEntry(state: speechModelState), Self.sonioxEntry(state: sonioxState)]
@@ -120,15 +127,37 @@ final class ModelLibrary {
         case .notDownloaded: .notInstalled
         case .downloading(let fraction): .downloading(fraction)
         case .loading: .preparing
-        case .downloaded, .available: .installed(bytes: OnDeviceRefiner.model.bytes)
+        case .downloaded, .available: .installed(bytes: cleanup.model.bytes)
         case .failed(let message): .failed(message)
         }
         return Entry(
             id: Self.gemmaID,
-            name: OnDeviceRefiner.model.name,
+            name: cleanup.model.name,
             vendor: "Google",
             kind: .local,
             detail: "Cleans up transcripts. Runs on this Mac's GPU through llama.cpp, never leaves this Mac.",
+            languages: "35+ languages",
+            licence: "Apache-2.0",
+            state: state
+        )
+    }
+
+    /// The model behind the assistant modes, or nil when this library has none.
+    var assistantEntry: Entry? {
+        guard let assistant else { return nil }
+        let state: Entry.State = switch assistant.availability {
+        case .notDownloaded: .notInstalled
+        case .downloading(let fraction): .downloading(fraction)
+        case .loading: .preparing
+        case .downloaded, .available: .installed(bytes: assistant.model.bytes)
+        case .failed(let message): .failed(message)
+        }
+        return Entry(
+            id: Self.assistantGemmaID,
+            name: assistant.model.name,
+            vendor: "Google",
+            kind: .local,
+            detail: "Answers what you say in an assistant mode — summarise, rewrite, translate, reply — using what you copied. Larger than the cleanup model, so slower and better at following instructions. Downloaded when you choose an assistant mode, loaded then, and freed after fifteen minutes unused. Runs on this Mac's GPU and never leaves it.",
             languages: "35+ languages",
             licence: "Apache-2.0",
             state: state
@@ -190,6 +219,10 @@ final class ModelLibrary {
             setCleanupModelEnabled?(true)
             return await cleanup.prepare()
         }
+        if id == Self.assistantGemmaID {
+            await assistant?.prepare()
+            return
+        }
         guard id == Self.parakeetID else { return }
 
         do {
@@ -207,6 +240,12 @@ final class ModelLibrary {
         if id == Self.gemmaID {
             setCleanupModelEnabled?(false)
             return await cleanup.remove()
+        }
+        if id == Self.assistantGemmaID {
+            // No switch to turn off: nothing fetches this at launch, so removing it stays removed
+            // until an assistant mode is chosen again.
+            await assistant?.remove()
+            return
         }
         guard id == Self.parakeetID else { return }
         await parakeet.unload()

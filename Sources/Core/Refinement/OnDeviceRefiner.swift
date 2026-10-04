@@ -47,10 +47,17 @@ final class OnDeviceRefiner {
         }
     }
 
-    static let model = CleanupModel.gemma4E2B
+    /// The model that cleans dictation. The assistant has a model of its own, passed to `init`.
+    static let cleanupModel = CleanupModel.gemma4E2B
 
-    private let log = Logger(subsystem: "com.grozoww.ourwhisper", category: "refine")
-    private let engine = LlamaEngine()
+    let model: CleanupModel
+    /// The one context this refiner's engine makes at load: the cleanup model's cleanup context, the
+    /// assistant model's assistant context.
+    let slot: LlamaEngine.Slot
+
+    let log = Logger(subsystem: "com.grozoww.ourwhisper", category: "refine")
+    /// Internal, not private, for the assistant's half of this type in its own file.
+    let engine = LlamaEngine()
     private let http: any HTTPClient
     private let directory: URL
 
@@ -61,6 +68,10 @@ final class OnDeviceRefiner {
     /// warm-up is a no-op rather than a quarter of a second of GPU on every key press.
     private var lookupIsWarm = false
 
+    /// When the model was last asked for something, or finished loading. What "not used for a
+    /// while" is measured from — see `unloadIfIdle`.
+    private(set) var lastUsed: Date?
+
     /// The one download-and-load in flight. Launch, the Configuration switch and the Models screen
     /// can all ask at once, and a second 2.8 GB download of the same file helps nobody.
     private var preparing: Task<Void, Never>?
@@ -70,19 +81,23 @@ final class OnDeviceRefiner {
     /// - Parameter availability: Only for tests that need a screen in the middle of a download or
     ///   a load, which would otherwise take 2.8 GB to reach. Production reads the disk.
     init(
+        model: CleanupModel = OnDeviceRefiner.cleanupModel,
+        slot: LlamaEngine.Slot = .cleanup,
         directory: URL = AppDirectories.languageModels,
         http: any HTTPClient = URLSessionHTTPClient(),
         availability: Availability? = nil
     ) {
+        self.model = model
+        self.slot = slot
         self.directory = directory
         self.http = http
         self.availability = availability
-            ?? (FileManager.default.fileExists(atPath: Self.model.location(in: directory).path(percentEncoded: false))
+            ?? (FileManager.default.fileExists(atPath: model.location(in: directory).path(percentEncoded: false))
                 ? .downloaded
                 : .notDownloaded)
     }
 
-    var fileURL: URL { Self.model.location(in: directory) }
+    var fileURL: URL { model.location(in: directory) }
 
     // MARK: - Lifecycle
 
@@ -110,8 +125,8 @@ final class OnDeviceRefiner {
         do {
             if !FileManager.default.fileExists(atPath: file.path(percentEncoded: false)) {
                 availability = .downloading(0)
-                log.info("Downloading \(Self.model.name, privacy: .public)")
-                try await Self.model.download(to: file, using: http) { [weak self] fraction in
+                log.info("Downloading \(self.model.name, privacy: .public)")
+                try await model.download(to: file, using: http) { [weak self] fraction in
                     Task { @MainActor in
                         // Only forwards, and only whole percents: the hops arrive in any order,
                         // and a re-render per megabyte is 2,800 of them.
@@ -125,13 +140,14 @@ final class OnDeviceRefiner {
             // is only seen here — before 2.8 GB is mapped for nothing.
             try Task.checkCancellation()
             availability = .loading
-            try await engine.load(from: file)
+            try await engine.load(from: file, slot: slot)
             // The load is a C call and cannot be interrupted, so a switch turned off while it ran is
             // only noticed here. Without this the model finished loading and `availability` said
             // "available" for an engine that `unload()` had already emptied.
             try Task.checkCancellation()
             availability = .available
-            log.info("\(Self.model.name, privacy: .public) ready")
+            noteUse()
+            log.info("\(self.model.name, privacy: .public) ready")
         } catch {
             // A cancelled download surfaces as `URLError.cancelled` as often as `CancellationError`,
             // and either way it is the user's decision rather than a failure to show them.
@@ -142,9 +158,30 @@ final class OnDeviceRefiner {
                 availability = FileManager.default.fileExists(atPath: file.path(percentEncoded: false)) ? .downloaded : .notDownloaded
                 return
             }
-            log.error("Cleanup model unavailable: \(error.localizedDescription, privacy: .public)")
-            availability = .failed("Gemma 4 could not be set up: \(error.localizedDescription) It tries again at the next launch.")
+            log.error("\(self.model.name, privacy: .public) unavailable: \(error.localizedDescription, privacy: .public)")
+            availability = .failed("\(model.name) could not be set up: \(error.localizedDescription) It tries again at the next launch.")
         }
+    }
+
+    func noteUse() {
+        lastUsed = Date()
+    }
+
+    /// Frees the memory, keeps the file, and says whether it did — when the model is loaded and has
+    /// not been used for `interval`.
+    ///
+    /// For the assistant's model, which is 4.6 GB of weights mapped for a feature somebody uses a
+    /// few times a day, and which a second load brings back in seconds. The cleanup model never
+    /// leaves: dictation is the app, and a first sentence that waits on a load is the failure
+    /// loading at launch exists to prevent. A model that is loading or downloading is never idle.
+    @discardableResult
+    func unloadIfIdle(for interval: Duration, now: Date = Date()) async -> Bool {
+        guard availability == .available, let lastUsed,
+              now.timeIntervalSince(lastUsed) >= Double(interval.components.seconds)
+        else { return false }
+        log.info("\(self.model.name, privacy: .public) idle; freeing its memory")
+        await unload()
+        return true
     }
 
     /// Frees the memory and keeps the file. What switching cleanup with Gemma off does.
@@ -164,7 +201,7 @@ final class OnDeviceRefiner {
         await engine.unload()
         try? FileManager.default.removeItem(at: fileURL)
         availability = .notDownloaded
-        log.info("\(Self.model.name, privacy: .public) removed")
+        log.info("\(self.model.name, privacy: .public) removed")
     }
 
     /// For `applicationWillTerminate`, which cannot await. See `LlamaEngine.shutdown`.
@@ -228,13 +265,18 @@ final class OnDeviceRefiner {
     /// formatter predates Gemma 4 and refuses it. The markup and the text are separate segments so
     /// that only the markup is ever read as control tokens — `prompt(for:)` keeps the model from
     /// *obeying* a transcript, and this keeps a transcript from *ending its own turn*.
+    ///
+    /// `thinking` is `<|think|>` at the top of the system turn, which is the whole of how the
+    /// template asks for it — read from the model file's own template. The model then writes
+    /// `<|channel>thought\n…<channel|>` before the answer, which `thoughtRemoved(from:)` takes out.
     nonisolated static func segments(
         instructions: String,
         prompt: String,
-        examples: [Example] = []
+        examples: [Example] = [],
+        thinking: Bool = false
     ) -> [PromptSegment] {
         var segments = [
-            PromptSegment(text: "<|turn>system\n", isMarkup: true),
+            PromptSegment(text: thinking ? "<|turn>system\n<|think|>\n" : "<|turn>system\n", isMarkup: true),
             PromptSegment(text: instructions.trimmingCharacters(in: .whitespacesAndNewlines), isMarkup: false),
         ]
         for example in examples {
@@ -479,14 +521,14 @@ final class OnDeviceRefiner {
 
 // MARK: - Timeout
 
-private struct TimedOut: Error {}
+struct TimedOut: Error {}
 
 /// Races an operation against a deadline.
 ///
 /// The user is standing there with a pill on screen waiting to paste. An on-device model that
 /// takes a very long time on a cold start must not hold the text hostage — after the timeout the
 /// rule-cleaned version is pasted and the dictation completes.
-private func withTimeout<T: Sendable>(
+func withTimeout<T: Sendable>(
     _ duration: Duration,
     operation: @escaping @Sendable () async throws -> T
 ) async throws -> T {
