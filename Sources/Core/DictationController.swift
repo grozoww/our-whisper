@@ -15,7 +15,6 @@ import OSLog
 final class DictationController {
     enum Phase: Equatable {
         case idle
-        case preparingModel(Double)
         case listening
         case transcribing
         case formatting
@@ -42,6 +41,13 @@ final class DictationController {
     private let router: TranscriptionRouter
     private let refinement: RefinementPipeline
 
+    /// What the speech model is doing, which is not the same question as what a dictation is
+    /// doing — see `SpeechModelStatus` for why the two used to share a phase and what it cost.
+    let speechModel: SpeechModelStatus
+
+    /// The speech model's preparation at launch, so whatever should wait for it can.
+    private(set) var launchPreparation: Task<Void, Never>?
+
     private var levelTask: Task<Void, Never>?
     private var isRecording = false
 
@@ -54,7 +60,8 @@ final class DictationController {
         vocabulary: VocabularyStore,
         history: HistoryStore,
         router: TranscriptionRouter,
-        refinement: RefinementPipeline
+        refinement: RefinementPipeline,
+        speechModel: SpeechModelStatus = SpeechModelStatus()
     ) {
         self.settings = settings
         self.modes = modes
@@ -62,6 +69,7 @@ final class DictationController {
         self.history = history
         self.router = router
         self.refinement = refinement
+        self.speechModel = speechModel
     }
 
     /// The engine the Home screen and Models library talk about. Exposed because the download it
@@ -85,7 +93,7 @@ final class DictationController {
 
         // Load the model now rather than on the first hotkey press. A 600 MB download the first
         // time you try to dictate would feel like the app is broken.
-        Task {
+        launchPreparation = Task {
             await prepareModel()
             if let path = SelfTest.requestedPath {
                 await SelfTest.run(path: path, language: SelfTest.requestedLanguage, provider: router.parakeet)
@@ -126,26 +134,20 @@ final class DictationController {
         hotkeyArmed = true
     }
 
+    /// Gets the speech model ready, or says why it could not.
+    ///
+    /// Nothing here touches `phase`: whether the model is ready is `speechModel`'s to say, and
+    /// a dictation's phase is only about the dictation. It used to carry both, and went back to
+    /// idle on its own 2.5 seconds after a refused hotkey press — with the model still compiling.
     private func prepareModel() async {
         // Nothing to download when the user runs entirely on the cloud engine, and downloading
         // 600 MB they asked not to use would be rude.
-        guard router.plannedProviderID(for: settings.settings.dictation) == .parakeet else {
-            phase = .idle
-            return
-        }
+        guard router.plannedProviderID(for: settings.settings.dictation) == .parakeet else { return }
 
         do {
-            phase = .preparingModel(0)
-            try await router.parakeet.prepare(progress: { [weak self] fraction in
-                Task { @MainActor in
-                    guard let self, case .preparingModel = self.phase else { return }
-                    self.phase = .preparingModel(fraction)
-                }
-            })
-            phase = .idle
+            try await speechModel.prepare(using: router.parakeet)
             log.info("Speech model ready")
         } catch {
-            phase = .failed(error.localizedDescription)
             log.error("Model preparation failed: \(error.localizedDescription, privacy: .public)")
         }
     }
@@ -176,8 +178,20 @@ final class DictationController {
             break
         }
 
-        if case .preparingModel = phase {
-            notify("Speech model is still downloading")
+        // Asked of the status and not of `phase`. The phase goes back to idle on its own after the
+        // first refusal, and the second press then recorded a sentence and failed with a different
+        // message, long after the user had stopped being told why.
+        let usesSpeechModel = router.plannedProviderID(for: settings.settings.dictation) == .parakeet
+        switch SpeechModelStatus.gate(for: speechModel.state, usesSpeechModel: usesSpeechModel) {
+        case .proceed:
+            break
+        case .wait(let message):
+            notify(message)
+            return
+        case .loadFirst(let message):
+            log.info("Hotkey pressed with the speech model not loaded; preparing it")
+            Task { await prepareModel() }
+            notify(message)
             return
         }
 

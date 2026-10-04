@@ -70,14 +70,25 @@ struct DictationSettings: Codable, Equatable, Sendable {
 struct RefinementSettings: Codable, Equatable, Sendable {
     /// Master switch. Off means the raw transcript is pasted exactly as the model produced it.
     var isEnabled: Bool = true
-    /// Use Apple's on-device model for the parts rules cannot do — tone, rewriting, judgement.
+    /// Use Gemma 4, on this Mac, for the parts rules cannot do — tone, rewriting, judgement.
     /// Rules still run either way; the model is an extra pass, not a replacement.
-    var useOnDeviceModel: Bool = false
+    ///
+    /// On by default, so the app downloads it once at launch the way it downloads the speech model.
+    ///
+    /// This is a new key and not the old `useOnDeviceModel`, on purpose. That one switched Apple's
+    /// model, was off by default because most Macs could not run it, and every settings file the
+    /// app has ever written carries its `false`. Reading it here would leave every existing user
+    /// without the model this key exists to give them, for a choice they never made about it.
+    var useCleanupModel: Bool = true
     var activeModeID: UUID?
     /// Switch modes based on the app being typed into.
     var autoSwitchByApp: Bool = true
     /// Give up on the model and paste the rule-cleaned text rather than making the user wait.
     var modelTimeoutSeconds: Double = 8
+
+    /// Whether the app should have the cleanup model on this Mac: both switches, because the master
+    /// one turns it off as surely as its own does. Not stored — it is the two above, read together.
+    var wantsCleanupModel: Bool { isEnabled && useCleanupModel }
 }
 
 struct SoundSettings: Codable, Equatable, Sendable {
@@ -146,7 +157,7 @@ extension RefinementSettings {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = RefinementSettings()
         isEnabled = container.value(.isEnabled, or: defaults.isEnabled)
-        useOnDeviceModel = container.value(.useOnDeviceModel, or: defaults.useOnDeviceModel)
+        useCleanupModel = container.value(.useCleanupModel, or: defaults.useCleanupModel)
         activeModeID = container.optional(.activeModeID)
         autoSwitchByApp = container.value(.autoSwitchByApp, or: defaults.autoSwitchByApp)
         modelTimeoutSeconds = container.value(.modelTimeoutSeconds, or: defaults.modelTimeoutSeconds)

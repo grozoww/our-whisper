@@ -43,8 +43,9 @@ certificate designated => identifier "com.grozoww.ourwhisper" and certificate le
 ```
 
 The first names one exact binary. The second names the bundle id and the certificate, so anything
-signed by the same certificate satisfies it. That is the whole mechanism, and it is why
-`scripts/release-cert.sh` exists for public releases — see "Shipping a build".
+signed by the same certificate satisfies it. That is the whole mechanism. Releases do the same
+with a Developer ID, whose requirement names the Apple team instead of one certificate — see
+"Shipping a build".
 
 ### The other half of the trap: two copies
 
@@ -137,9 +138,10 @@ plugin. `mlx-swift` 0.31.5 added a CUDA build plugin and the build fails with
 validation, which would auto-trust arbitrary build-time code.
 
 **`mlx-swift` 0.31.5+ also needs Xcode 26's separately-downloaded Metal toolchain**
-(`xcodebuild -downloadComponent MetalToolchain`, several gigabytes). This is why cleanup uses
-Apple's Foundation Models rather than a downloaded MLX model: same privacy guarantee, no
-multi-gigabyte tax on every contributor and every CI run.
+(`xcodebuild -downloadComponent MetalToolchain`, several gigabytes). This is why cleanup runs
+Gemma 4 through llama.cpp, whose package ships a prebuilt framework pinned by checksum, rather
+than through MLX: same privacy guarantee, no multi-gigabyte tax on every contributor and every CI
+run.
 
 ## Editor
 
@@ -183,40 +185,58 @@ that code runs on the audio thread, where "probably fine" becomes a dropout.
 
 ## Shipping a build
 
+Releases are built by CI: merging to `main` publishes one, and the app's own updater offers it to
+everyone running an older copy. `./scripts/package.sh` is the same build on your laptop, for
+reproducing a problem.
+
 ```bash
-./scripts/release-cert.sh          # once, ever: the certificate every release is signed with
-./scripts/package.sh               # the best path the environment allows
-./scripts/package.sh --unsigned    # ad-hoc, even when a certificate is available
+./scripts/package.sh                  # signed with your Developer ID, notarized, stapled
+./scripts/package.sh --no-notarize    # signed only, to try the signing without waiting on Apple
 ```
 
-All three produce a DMG with the app and an Applications symlink inside. The filename says which
-you got: `OurWhisper-<version>.dmg`, `-unnotarized.dmg` or `-unsigned.dmg`.
+There is no unsigned or self-signed release, and CI refuses to make one: a missing secret fails
+the job rather than shipping whatever can be built. Both existed while this project had no Apple
+account, and both were ways for a release to look finished and be wrong. An ad-hoc signature pins
+the Accessibility grant to one exact binary, so every update silently broke dictation; a
+self-signed one cannot be notarized, so every download needed a workaround. For a build to run on
+your own Mac, use `./scripts/run.sh`.
 
-**Self-signed** is the path this project ships on, and it is what `release-cert.sh` sets up. The
-signing trap at the top of this file applies to releases exactly as it applies to your rebuilds:
-an ad-hoc signature pins the Accessibility grant to one exact binary, so every update used to
-silently break dictation for everyone who had installed the previous one. A certificate — any
-certificate, Apple is not involved — makes the grant survive. Run the script once, put the three
-secrets it prints into the repository, and never think about it again.
+**Why it has to be a Developer ID, not only notarized.** The app embeds `llama.framework`, and the
+hardened runtime — which notarization requires — makes dyld refuse any library that was not signed
+by the same *team* as the app. A self-signed or ad-hoc signature has no team, so the app crashes at
+launch with "different Team IDs", even when the framework was signed with the very same key.
+`package.sh` signs the framework first and the app last, never with `--deep`, and then launches
+the result once, because that crash is the one thing `codesign --verify` cannot see.
 
-**Do not lose that key.** A release signed by a different certificate is a different app to macOS,
-and every user re-grants Accessibility by hand once. The script tells you to back the `.p12` up
-because there is no way to recreate it.
+**Secrets.** The release workflow reads five repository secrets:
 
-**Unsigned** is ad-hoc signed: a real signature with no certificate behind it. Only for builds
-nobody installs — it costs every user their permission on every update. `--unsigned` exists to
-rehearse the workflow, not to ship.
+| Secret | What it is |
+| --- | --- |
+| `CSC_LINK` | the Developer ID Application certificate with its private key, exported from Keychain Access as a `.p12`: `base64 -i cert.p12 \| pbcopy` |
+| `CSC_KEY_PASSWORD` | the password you gave that `.p12` |
+| `APPLE_API_KEY` | the *contents* of the App Store Connect API key, the `.p8` file |
+| `APPLE_API_KEY_ID` | that key's Key ID |
+| `APPLE_API_ISSUER` | the Issuer ID of the team, from the same page |
 
-Neither of those is notarized, so Gatekeeper still blocks the first double-click and the user
-still needs `scripts/install.sh`. `package.sh` writes `dist/INSTALL.md` with the exact wording to
-give them; the release workflow pastes it into the release notes. Do not skip that — a download
-that refuses to open with no explanation reads as broken software.
+To run `package.sh` yourself, put the same key in your keychain once. `package.sh` then finds the
+certificate on its own:
 
-**Signed and notarized** opens with a double-click and no warning. It needs a paid Apple Developer
-account: put the Developer ID certificate in the same three secrets and add `APPLE_TEAM_ID`,
-`NOTARY_APPLE_ID` and `NOTARY_PASSWORD`. Notarization uploads the DMG to Apple and waits a few
-minutes. Signing and notarizing are separate decisions in `package.sh` for a reason — coupling
-them is what made every release ad-hoc until the certificate arrived.
+```bash
+xcrun notarytool store-credentials OurWhisper --key AuthKey_XXXX.p8 --key-id XXXX --issuer <issuer-id>
+NOTARY_KEYCHAIN_PROFILE=OurWhisper ./scripts/package.sh
+```
+
+**Trying it before you merge.** Actions → Release → Run workflow, on your branch. It signs,
+notarizes and publishes a *prerelease*, which the app's update check does not offer. This is the
+only way to prove the secrets and the runner's keychain work together, and it costs nothing to
+repeat.
+
+**Certificates expire.** A Developer ID certificate issued from Apple's older intermediate is
+capped at that intermediate's expiry, 1 Feb 2027, rather than the usual five years; one from the
+G2 profile runs to about 2031. Signatures made while it was valid stay valid, because they are
+timestamped, and the requirement the app is installed with names the Apple *team*, not the
+certificate — so a renewed one keeps updates and permissions working. Renewing is a new `.p12` and
+new `CSC_LINK` and `CSC_KEY_PASSWORD`; there is no code to change.
 
 ### Version numbers
 
@@ -264,21 +284,17 @@ first thing anyone asks when a download misbehaves.
 | Trigger | Tag | Name |
 | --- | --- | --- |
 | Pull request | — | Nothing published. Builds and tests only — no packaging. |
-| Push to `main` | `release-1.0.3-a1b2c3d`, a prerelease of its own | `release-1.0.3-a1b2c3d` |
-| Push a tag `v*` | the tag. Notarized if the signing secrets are set | `release-1.0.3-a1b2c3d` |
-| Actions → Run workflow | `build-<n>`, with an "unsigned" checkbox for rehearsing | `release-1.0.3-a1b2c3d (build 7)` |
+| Push to `main` | `release-1.0.3-a1b2c3d` | `release-1.0.3-a1b2c3d` |
+| Push a tag `v*` | the tag | `release-1.0.3-a1b2c3d` |
+| Actions → Run workflow | `build-<n>`, a prerelease, for rehearsing | `release-1.0.3-a1b2c3d (build 7)` |
 
-`.github/workflows/release.yml` signs whenever `MACOS_CERTIFICATE` is set, and notarizes on top of
-that only when the notary secrets are set too. With no certificate at all it falls back to ad-hoc
-and logs a workflow warning, because that build will cost its users their Accessibility
-permission.
+Every one of them is signed and notarized, or the job fails — `.github/workflows/release.yml`
+checks the five secrets are present before it builds anything.
 
 A `v*` tag is a finished release, and so is a merge to `main`; only a `workflow_dispatch` rehearsal
-is a prerelease, because that is a build nobody merged. Notarization deliberately does not enter
-into that decision — it decides whether Gatekeeper complains about the download, not whether the
-maintainer has finished the release. Tying the two together marked *every* release a prerelease,
-since there is no Apple Developer account here, and `/releases/latest` skips prereleases: the app's
-update check got a 404 and quietly reported "up to date" for ever.
+is a prerelease, because that is a build nobody merged. This was once decided by whether the build
+was notarized, and with no Apple account that marked *every* release a prerelease. `/releases/latest`
+skips prereleases, so the app's update check got a 404 and quietly reported "up to date" for ever.
 
 Nothing is deleted and no tag is ever reused, so pushing to `main` adds a build rather than
 replacing the one before it. Each tag carries the version and the commit, so it is unique per
@@ -291,95 +307,13 @@ without the Debug build noticing.
 ### Installing
 
 `scripts/install.sh` is the `curl | bash` in the README. It asks `/releases/latest`, and if that
-404s — which it does when every release is a prerelease, the state this project was in before
-merges to `main` became finished releases — it reads the list and takes the highest version out of
-the DMG filenames. Not the first entry: GitHub does not return that list newest first, and reading
-it positionally is what had `curl | bash` installing 1.0.8 while 1.0.10 was out. Then it copies the
-app into `/Applications` and clears `com.apple.quarantine`. That last step is the point of the
-script. macOS refuses to open an unnotarized download at all, claiming the app is damaged, and
-talking every user through `xattr -dr` by hand is not a distribution strategy.
+404s — which it does when every release is a prerelease — it reads the list and takes the highest
+version out of the DMG filenames. Not the first entry: GitHub does not return that list newest
+first, and reading it positionally is what had `curl | bash` installing 1.0.8 while 1.0.10 was out.
 
-Keep it dependency-free. It has to run on a stock Mac, which means no `jq`, and Python cannot be
-assumed either. It parses the GitHub API with `grep`, and it is short enough to read before
-running, which is the only reason anyone should be willing to pipe it into a shell.
-
-### The screenshots
-
-`./scripts/screenshots.sh` redraws `docs/images`. It launches the real app once per shot with
-`OURWHISPER_SCREENSHOT` set, which poses that screen with invented demo data and prints its window
-number, then photographs that one window — see `ScreenshotMode`. Your own settings, modes and
-history are never in the pictures: screenshot mode redirects the app's storage to a throwaway
-directory, the same trick the tests use.
-
-The app cannot photograph itself. Screen recording is granted per bundle and a debug build's path
-changes with the checkout, so a fresh build has been granted nothing while your terminal already
-has. Blank or black images mean that permission is missing — System Settings ▸ Privacy & Security
-▸ Screen Recording, for whatever ran the script.
-
-Re-run it when a screen changes shape, and commit the PNGs. Light and dark are separate files;
-the README picks between them with `<picture>`.
-
-Two more environment variables, for looking at a screen rather than photographing it for the
-README. `OURWHISPER_SCREENSHOT_SIZE=880x560` poses the window at a given size — layouts break at
-the small end, and the small end is the one nobody drags a window to. `OURWHISPER_SCREENSHOT_SIDEBAR=collapsed`
-hides the sidebar, which is how the screens with a list of their own look when that list becomes
-the leftmost thing in the window. The sidebar is set either way rather than left alone, because
-AppKit autosaves whether it is collapsed into the app's defaults — which a debug build shares with
-the installed one, so whoever collapsed it in the real app would otherwise get README screenshots
-with no sidebar in them.
-
-### The app icon and the menu bar glyph
-
-`./scripts/make-icon.swift` draws `Sources/Resources/Assets.xcassets` with CoreGraphics. The PNGs
-it writes are committed, so a clone builds without running it; re-run it only when changing the
-icon. Each size is drawn at its own scale rather than downsampled from 1024, because a stroke that
-reads well at 512 turns to mush when squeezed into 16 pixels. `--icns` also writes
-`dist/OurWhisper.icns` for anything outside the app bundle.
-
-The same script writes `MenuBarIcon.imageset`, the frog the menu bar shows when the app is idle:
-the same face as a solid shape with the eyes and mouth cut out of it, at 18 and 36 pixels — the
-way every other glyph in a menu bar is drawn, and the reverse of the app icon's ink-on-skin. It
-is one drawing rather than a light one and a dark one because it ships as a **template** — macOS
-keeps only its alpha channel and paints the shape itself, dark on a light menu bar and light on a
-dark one, inverted again while the menu is open. Two fixed PNGs would get that wrong every time
-the menu bar's appearance and the system's disagree, which they do whenever the desktop picture
-is dark under Light Mode. The head is fitted from the shared geometry; the eyes and mouth are
-placed in pixels, per size, because at 18 pixels a two-pixel hole that straddles a pixel boundary
-is a grey blot rather than an eye.
-
-Release builds are **arm64 only**, set on the `xcodebuild` command line rather than only in the
-project — Swift package targets live in a generated project of their own and do not inherit
-`ARCHS`. Without it the Release build goes universal and fails compiling FluidAudio for x86_64,
-a machine this app cannot run on anyway.
-
-## Pull requests
-
-CI builds and tests every PR on a macOS runner with `CODE_SIGNING_ALLOWED=NO`. That needs no
-secret, so a fork's PR runs exactly as ours does. The release workflow is separate and main-repo
-only, so a fork PR can never reach the signing certificate.
-
-PRs do not package a DMG. A Release-config break — signing, hardened runtime, asset catalog,
-arm64-only — fails `release.yml` at `package.sh`, before anything is published, so a build that
-cannot be made cannot ship. What that does not catch is an image that builds *and is wrong*, since
-`package.sh` exits zero on one; so the checks that the image mounts, holds the app, has an icon and
-verifies its signature run in `release.yml` too, against the bytes actually being uploaded.
-
-To try a branch as a real app, run the release workflow manually against it with the "unsigned" box
-ticked. It publishes under a `build-<n>` tag of its own, so it collides with nothing.
-
-The Xcode project uses **synchronized file groups**: a new file under `Sources/` joins the target
-automatically, so you never edit `project.pbxproj` and PRs do not conflict in it.
-
-For anything touching the recording, transcription or paste path, say in the description which
-apps you tested pasting into — that path breaks in app-specific ways, and no test covers it.
-
-For anything touching `UpdateInstaller` or `BundleSignature`, say that you installed a
-certificate-signed build over a certificate-signed one and that dictation still worked afterwards
-without re-granting Accessibility. That is the only way to find out, and getting it wrong costs
-every user their permission silently.
-
-Before pushing:
-
-```bash
-./scripts/run.sh --check
-```
+It then asks Gatekeeper about the disk image *before* it quits or touches the installed copy,
+and stops if the answer is no — a release that is not notarized, or that was tampered with, is not
+worth replacing a working app for. It does not remove the quarantine flag: on a notarized app that
+only switches the check off. Last, it compares the installed copy's signing requirement with the new
+one and clears the Accessibility grant when they differ, because a grant for a different signature
+is a ticked box that applies to nothing.

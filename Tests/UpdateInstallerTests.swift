@@ -375,6 +375,11 @@ struct UpdateInstallerTests {
         (#"identifier "com.grozoww.ourwhisper" and anchor apple generic"#, true),
         // The word inside an identifier literal must not vote.
         (#"identifier "com.example.certificate""#, false),
+        // What a build signed with a Developer ID really reports, copied from `codesign -d -r-` on
+        // this app signed with the project's own. It names the team and no leaf, so every later
+        // build from the same account satisfies it — and if this ever answered "no", the first
+        // Developer ID build would refuse to update itself as though it were ad-hoc.
+        (#"identifier "com.grozoww.ourwhisper" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = D6U6DW65Y7"#, true),
     ])
     func judgesRequirementShape(requirement: String, satisfiable: Bool) {
         #expect(BundleSignature.namesACertificate(requirement) == satisfiable)

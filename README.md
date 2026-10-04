@@ -118,27 +118,25 @@ Online (optional, Soniox): 60+ including Chinese and Japanese. Requires your own
 ## Requirements
 
 - macOS 15 (Sequoia) or later, Apple Silicon
-- ~600 MB disk for the speech model, downloaded once on first launch
-- Optional: macOS 26 with Apple Intelligence enabled, for model-based cleanup. Nothing to
-  download, and the rule-based cleanup works without it on every supported version.
+- ~3.4 GB of disk, downloaded once on first launch: the speech model (600 MB) and the cleanup
+  model (2.8 GB). Both run on your Mac. Until the cleanup model has arrived, rule-based cleanup
+  is used — which is also all you get if you switch the model off.
 
 ## Install
+
+Download the disk image from [Releases](https://github.com/grozoww/our-whisper/releases), open it
+and drag OurWhisper to Applications. Releases are signed with an Apple Developer ID and notarized
+by Apple, so macOS opens it without a warning.
+
+Or from a terminal:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/grozoww/our-whisper/main/scripts/install.sh | bash
 ```
 
-That fetches the newest build, copies OurWhisper to Applications and clears the download
-quarantine flag. The last step is not a convenience. These builds are **not notarized** — Apple
-charges $99 a year to vouch for a build, and this project does not pay it — and macOS refuses to
-open an unnotarized download at all, with a dialog claiming the app is damaged. It is not damaged;
-it is just not stamped. [`scripts/install.sh`](scripts/install.sh) is short and does nothing else,
-so read it before you run it.
-
-Prefer to do it by hand: download the DMG from
-[Releases](https://github.com/grozoww/our-whisper/releases), drag OurWhisper to Applications, then
-**right-click it and choose Open**, once. Every release says whether it is notarized. Every push to
-`main` adds a prerelease, so there is always a current build to download and older ones stay where
+That fetches the newest build, checks it with Gatekeeper and copies OurWhisper to Applications.
+[`scripts/install.sh`](scripts/install.sh) is short, so read it before you run it. Every push to
+`main` adds a release, so there is always a current build to download and older ones stay where
 they were; tags produce versioned releases.
 
 OurWhisper then asks for Microphone and Accessibility permission, and both are required: the
@@ -155,7 +153,7 @@ permission. If any of it does not add up, nothing is installed and the row says 
 `install.sh` still works and does the same thing.
 
 You grant Accessibility once and it stays granted. macOS attaches that permission to the app's
-code signature, so releases are signed with a certificate that does not change between versions.
+code signature, and every release is signed by the same Apple Developer ID team.
 Upgrading from a release older than that change costs you the grant one last time: the entry in
 System Settings still shows a ticked OurWhisper and no longer applies to the new build. The Home
 screen has a **Reset and ask again** button for exactly that, and by hand it is removing
@@ -189,8 +187,10 @@ Two stages, in this order, and the second is optional.
 your vocabulary list. They are pure functions — instant, deterministic, and identical every time.
 They run on every dictation regardless of what else is available.
 
-**The on-device model** runs second, if you turn it on. It handles what rules cannot: tone,
-phrasing, and judgement about what you meant. Per mode, it can also be shown your clipboard as
+**Gemma 4** runs second, if you leave it on. It is Google's small open model, downloaded once
+(2.8 GB) and run on your Mac's GPU through [llama.cpp](https://github.com/ggml-org/llama.cpp), so
+what you said never leaves it. It handles what rules cannot: tone, phrasing, and judgement about
+what you meant. On Russian and Ukrainian it answers in about a third of a second. Per mode, it can also be shown your clipboard as
 reference — useful for replying to a message whose names you would otherwise have to spell out. If it is unavailable, slow, or returns something
 implausible, the rule-cleaned text is used instead. A model problem costs you latency, never words.
 
@@ -207,8 +207,10 @@ implausible, the rule-cleaned text is used instead. A model problem costs you la
 
 - [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) — CC-BY-4.0
 - [FluidAudio](https://github.com/FluidInference/FluidAudio) — CoreML runtime for Parakeet
-- Apple's [Foundation Models](https://developer.apple.com/documentation/foundationmodels) — the
-  on-device language model used for cleanup on macOS 26
+- [Gemma 4 E2B](https://huggingface.co/ggml-org/gemma-4-E2B-it-GGUF) — Apache-2.0, the language
+  model used for cleanup
+- [llama.cpp](https://github.com/ggml-org/llama.cpp) and its Swift package
+  [llama.swift](https://github.com/mattt/llama.swift) — what runs it
 
 ## License
 

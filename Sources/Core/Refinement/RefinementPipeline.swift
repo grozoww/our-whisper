@@ -77,7 +77,7 @@ final class RefinementPipeline {
     func modelIsEnabled(_ settings: RefinementSettings) -> Bool {
         Self.modelIsEnabled(
             isEnabled: settings.isEnabled,
-            useOnDeviceModel: settings.useOnDeviceModel,
+            useCleanupModel: settings.useCleanupModel,
             modelIsAvailable: onDevice.availability.isAvailable
         )
     }
@@ -87,7 +87,7 @@ final class RefinementPipeline {
     func willUseModel(_ settings: RefinementSettings, mode: Mode) -> Bool {
         Self.willUseModel(
             isEnabled: settings.isEnabled,
-            useOnDeviceModel: settings.useOnDeviceModel,
+            useCleanupModel: settings.useCleanupModel,
             modelIsAvailable: onDevice.availability.isAvailable,
             instructions: mode.instructions
         )
@@ -96,26 +96,26 @@ final class RefinementPipeline {
     /// The two above, as the arithmetic without the dependency.
     ///
     /// Pure because the instance versions read `onDevice.availability`, which a test cannot set —
-    /// and a CI runner has no Apple Intelligence, so every assertion against them passes for the
-    /// wrong reason. This is the decision that keeps the app off the user's pasteboard; it has to
+    /// and a CI runner never has the model downloaded, so every assertion against them passes for
+    /// the wrong reason. This is the decision that keeps the app off the user's pasteboard; it has to
     /// be assertable on a machine that does not have the model.
     nonisolated static func modelIsEnabled(
         isEnabled: Bool,
-        useOnDeviceModel: Bool,
+        useCleanupModel: Bool,
         modelIsAvailable: Bool
     ) -> Bool {
-        isEnabled && useOnDeviceModel && modelIsAvailable
+        isEnabled && useCleanupModel && modelIsAvailable
     }
 
     nonisolated static func willUseModel(
         isEnabled: Bool,
-        useOnDeviceModel: Bool,
+        useCleanupModel: Bool,
         modelIsAvailable: Bool,
         instructions: String
     ) -> Bool {
         modelIsEnabled(
             isEnabled: isEnabled,
-            useOnDeviceModel: useOnDeviceModel,
+            useCleanupModel: useCleanupModel,
             modelIsAvailable: modelIsAvailable
         ) && !instructions.isEmpty
     }

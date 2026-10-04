@@ -45,7 +45,20 @@ struct HomeView: View {
                     mode: appState.settings.settings.dictation.hotkeyMode
                 )
                 RowDivider()
-                ModelRow(phase: appState.dictation.phase, provider: plannedProvider)
+                ModelRow(
+                    status: appState.speechModel.state,
+                    startedAt: appState.speechModel.startedAt,
+                    phase: appState.dictation.phase,
+                    provider: plannedProvider,
+                    retry: { Task { await appState.models.download(ModelLibrary.parakeetID) } }
+                )
+                if appState.settings.settings.refinement.wantsCleanupModel {
+                    RowDivider()
+                    CleanupModelRow(
+                        availability: appState.onDeviceRefiner.availability,
+                        retry: { Task { await appState.onDeviceRefiner.prepare() } }
+                    )
+                }
                 RowDivider()
                 ModeRow(mode: activeMode, autoSwitch: appState.settings.settings.refinement.autoSwitchByApp)
             }
@@ -88,52 +101,161 @@ private struct HotkeyRow: View {
     }
 }
 
-private struct ModelRow: View {
+/// The speech model, in whichever of its states the person looking at it is waiting on.
+///
+/// Every state says what is happening and, where there is one, what to do. The one that needed
+/// saying most is the compile: it used to read "Downloading — 50%" for as long as it took, which is
+/// a download that has hung, and it is not one.
+///
+/// Not private, unlike its neighbours: the wording of each state is asserted in tests.
+struct ModelRow: View {
+    let status: SpeechModelStatus.State
+    let startedAt: Date?
     let phase: DictationController.Phase
     let provider: TranscriptionProviderID
+    let retry: () -> Void
 
     var body: some View {
-        SettingsRow(symbol: symbol, title: "Speech model", detail: detail, tint: tint) {
-            if case .preparingModel(let fraction) = phase {
+        SettingsRow(
+            symbol: symbol,
+            title: "Speech model",
+            detail: Self.detail(status: status, phase: phase, provider: provider),
+            tint: tint
+        ) {
+            control
+        }
+    }
+
+    @ViewBuilder
+    private var control: some View {
+        if provider == .parakeet {
+            switch status {
+            case .starting:
+                ProgressView().controlSize(.small)
+            case .downloading(let fraction):
                 ProgressView(value: fraction)
                     .progressViewStyle(.linear)
                     .frame(width: 110)
+            case .optimizing:
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    ElapsedClock(since: startedAt)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+            case .failed:
+                Button("Try again", action: retry)
+                    .buttonStyle(.bordered)
+            case .notLoaded, .ready:
+                EmptyView()
+            }
+        }
+    }
+
+    private var failed: Bool {
+        if case .failed = phase { return true }
+        if provider == .parakeet, case .failed = status { return true }
+        return false
+    }
+
+    private var symbol: String {
+        if failed { return "exclamationmark.triangle.fill" }
+        guard provider == .parakeet else { return "cloud" }
+        return switch status {
+        case .starting, .downloading, .optimizing: "arrow.down.circle"
+        case .notLoaded: "arrow.down.circle"
+        case .ready, .failed: "checkmark.circle.fill"
+        }
+    }
+
+    private var tint: Color {
+        if failed { return .orange }
+        guard provider == .parakeet else { return .blue }
+        return switch status {
+        case .starting, .downloading, .optimizing, .notLoaded: .secondary
+        case .ready, .failed: .green
+        }
+    }
+
+    /// Pure, so every state can be asserted on without building a view.
+    nonisolated static func detail(
+        status: SpeechModelStatus.State,
+        phase: DictationController.Phase,
+        provider: TranscriptionProviderID
+    ) -> String {
+        if case .failed(let message) = phase { return message }
+
+        guard provider == .parakeet else {
+            return phase.dictationDetail
+                ?? "Soniox, in the cloud. Audio leaves this Mac for this language."
+        }
+
+        return switch status {
+        case .starting:
+            "Getting Parakeet TDT v3 ready…"
+        case .downloading(let fraction):
+            "Downloading Parakeet TDT v3 — \(Int(fraction * 100))%"
+        case .optimizing:
+            "Optimizing Parakeet for this Mac's Neural Engine. This happens once and can take a few minutes. Leave OurWhisper running until it finishes."
+        case .failed(let message):
+            message
+        case .notLoaded:
+            "Parakeet TDT v3 is not loaded. Press the hotkey, or open Models to download it."
+        case .ready:
+            phase.dictationDetail ?? "Parakeet TDT v3, running offline on the Neural Engine."
+        }
+    }
+}
+
+/// Gemma 4, the cleanup model — shown on Home only while the app wants it, so a 2.8 GB download
+/// that starts by itself on the first launch is never happening out of sight.
+private struct CleanupModelRow: View {
+    let availability: OnDeviceRefiner.Availability
+    let retry: () -> Void
+
+    var body: some View {
+        SettingsRow(symbol: symbol, title: "Cleanup model", detail: availability.explanation, tint: tint) {
+            switch availability {
+            case .downloading(let fraction):
+                ProgressView(value: fraction)
+                    .progressViewStyle(.linear)
+                    .frame(width: 110)
+            case .loading:
+                ProgressView().controlSize(.small)
+            case .failed:
+                Button("Try again", action: retry)
+                    .buttonStyle(.bordered)
+            case .notDownloaded, .downloaded, .available:
+                EmptyView()
             }
         }
     }
 
     private var symbol: String {
-        switch phase {
+        switch availability {
+        case .available: "checkmark.circle.fill"
         case .failed: "exclamationmark.triangle.fill"
-        case .preparingModel: "arrow.down.circle"
-        default: provider == .soniox ? "cloud" : "checkmark.circle.fill"
+        case .notDownloaded, .downloading, .downloaded, .loading: "arrow.down.circle"
         }
     }
 
     private var tint: Color {
-        switch phase {
+        switch availability {
+        case .available: .green
         case .failed: .orange
-        case .preparingModel: .secondary
-        default: provider == .soniox ? .blue : .green
+        case .notDownloaded, .downloading, .downloaded, .loading: .secondary
         }
     }
+}
 
-    private var detail: String {
-        switch phase {
-        case .preparingModel(let fraction):
-            "Downloading Parakeet TDT v3 — \(Int(fraction * 100))%"
-        case .failed(let message):
-            message
-        case .listening:
-            "Listening…"
-        case .transcribing:
-            "Transcribing…"
-        case .formatting:
-            "Cleaning up…"
-        case .idle:
-            provider == .soniox
-                ? "Soniox, in the cloud. Audio leaves this Mac for this language."
-                : "Parakeet TDT v3, running offline on the Neural Engine."
+private extension DictationController.Phase {
+    /// What the speech model's row says while a dictation is under way. `nil` when there is none.
+    var dictationDetail: String? {
+        switch self {
+        case .listening: "Listening…"
+        case .transcribing: "Transcribing…"
+        case .formatting: "Cleaning up…"
+        case .idle, .failed: nil
         }
     }
 }
