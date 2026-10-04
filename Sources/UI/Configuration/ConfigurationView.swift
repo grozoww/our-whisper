@@ -258,6 +258,13 @@ struct ConfigurationView: View {
         .onChange(of: appState.settings.settings.appearance.showInDock) { _, showInDock in
             WindowPresenter.setShowsDockIcon(showInDock)
         }
+        // Here and not on the switch: Reset can turn it back on too, and the Updates section is
+        // in a lazy stack, so it may not exist yet when that happens. Switching *on* asks now,
+        // because the loop in `AppState.watchForUpdates` would otherwise take up to a day.
+        .onChange(of: appState.settings.settings.updates.checkAutomatically) { _, isOn in
+            guard isOn, appState.availableUpdate == nil else { return }
+            Task { await appState.checkForUpdate() }
+        }
     }
 
     /// The stored chord is optional — "no hold-to-talk key" is a real state. The recorder wants a
@@ -352,7 +359,7 @@ private struct UpdatesSection: View {
 
         SettingsSection(
             title: "Updates",
-            subtitle: "The only requests the app makes on its own, and unauthenticated reads of a public page — nothing about you or this Mac is sent. Checking happens by itself if you let it; downloading only ever happens when you press the button."
+            subtitle: "The only requests the app makes on its own, and unauthenticated reads of a public page — nothing about you or this Mac is sent. Checking happens by itself if you let it — when the app starts, then again once a day; downloading only ever happens when you press the button."
         ) {
             SettingsRow(
                 symbol: "arrow.down.circle",

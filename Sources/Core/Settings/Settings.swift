@@ -111,8 +111,9 @@ struct AppearanceSettings: Codable, Equatable, Sendable {
 }
 
 struct UpdateSettings: Codable, Equatable, Sendable {
-    /// The single network call the app makes on its own. Off means updates are checked only when
-    /// the user presses the button — see `UpdateChecker` for why this is not telemetry.
+    /// The single network call the app makes on its own, at launch and then every
+    /// `UpdateSchedule.interval`. Off means updates are checked only when the user presses the
+    /// button — see `UpdateChecker` for why this is not telemetry.
     var checkAutomatically: Bool = true
     var lastCheck: Date?
     /// A version the user chose to skip, so the banner does not come back every launch.
