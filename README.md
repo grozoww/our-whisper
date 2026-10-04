@@ -74,9 +74,11 @@ the optional cloud provider instead.
   copied is pasted exactly as you copied it. Copy a stack trace, say what you want done about it,
   and both land in one paste. Ask for it mid-sentence, in whatever words you would use — *"here is
   the error I keep getting, paste the clipboard, what does it mean?"* — and it lands *there*. There
-  is no phrase to configure and no language to pick: the on-device model works out where you meant
-  it, and it still never sees what you copied, so nothing rewrites it. Say nothing about the
-  clipboard and nothing is pasted, so the switch can stay on.
+  is no phrase to configure and no language to pick: the on-device model reads your sentence, says
+  which words asked for the clipboard, and the app swaps them for the exact text. The model sees
+  only the sentence and never what you copied, so nothing rewrites it. Say nothing about the
+  clipboard, or talk *about* it ("the clipboard is not working again"), and nothing is pasted, so
+  the switch can stay on. It adds about half a second.
 
   Both of these need the on-device model, and neither does anything without it — with the model
   off the app does not read your clipboard at all.

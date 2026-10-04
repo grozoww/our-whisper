@@ -190,6 +190,12 @@ final class AppState {
                 // anyway when the wait ends. Their switch had nothing to cancel yet.
                 guard settings.settings.refinement.wantsCleanupModel else { return }
                 await onDeviceRefiner.prepare()
+                // Only for someone who has the clipboard switched on somewhere: the lookup's
+                // context is memory nobody else should be holding. Everyone else who turns it on
+                // later is covered by the warm-up when recording starts.
+                if modes.anyModePastesClipboard {
+                    await onDeviceRefiner.warmUpClipboardLookup()
+                }
             }
         }
         if let text = SelfTest.requestedCleanup {

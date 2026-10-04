@@ -412,7 +412,51 @@ struct ClipboardPasteTests {
 
 @Suite("Where the clipboard lands")
 struct ClipboardPlacementTests {
-    @Test("The marker the model left is where the clipboard goes")
+    @Test("The words that asked become the marker, and nothing else changes")
+    func marksTheRequest() {
+        let text = "Here is the error, paste what I copied, what does it mean?"
+        #expect(
+            ClipboardContext.marking("paste what I copied", in: text)
+                == "Here is the error, \(ClipboardContext.marker), what does it mean?"
+        )
+    }
+
+    @Test("A request is found whatever case the model quoted it in")
+    func marksWithoutRegardToCase() {
+        #expect(
+            ClipboardContext.marking("paste the clipboard", in: "Hey, Paste the clipboard. Thanks!")
+                == "Hey, \(ClipboardContext.marker). Thanks!"
+        )
+    }
+
+    @Test("A sentence that was only the request leaves just the marker")
+    func dropsThePunctuationAMarkerAloneLeaves() {
+        // "‹clipboard›." would put a full stop on the end of whatever was copied — a stack trace, a
+        // password, a line of code — and the user never said it.
+        #expect(ClipboardContext.marking("Paste the clipboard", in: "Paste the clipboard.") == ClipboardContext.marker)
+        #expect(ClipboardContext.marking("Вставь буфер", in: "Вставь буфер!") == ClipboardContext.marker)
+        // But a sentence with anything else in it keeps its own punctuation.
+        #expect(
+            ClipboardContext.marking("paste the clipboard", in: "Look, paste the clipboard.")
+                == "Look, \(ClipboardContext.marker)."
+        )
+    }
+
+    @Test("Words that are not in the text mark nothing")
+    func ignoresARequestThatIsNotThere() {
+        let text = "Ship it on Tuesday."
+        #expect(ClipboardContext.marking("paste the clipboard", in: text) == text)
+        #expect(ClipboardContext.marking("", in: text) == text)
+    }
+
+    @Test("A marker is recognised however the model cased it")
+    func recognisesTheMarker() {
+        #expect(ClipboardContext.hasMarker("Here: \(ClipboardContext.marker)"))
+        #expect(ClipboardContext.hasMarker("Here: [[Clipboard]]"))
+        #expect(!ClipboardContext.hasMarker("Here: [CLIPBOARD]"))
+    }
+
+    @Test("The marker is where the clipboard goes")
     func replacesTheMarker() {
         let text = "Here is the error, \(ClipboardContext.marker), what does it mean?"
         let result = ClipboardContext.substituted("TypeError: x", into: text)
@@ -467,8 +511,8 @@ struct ClipboardPlacementTests {
 
 }
 
-/// Whether the model is asked about the clipboard at all — the last rule in the placement path,
-/// and now only about whether there is anything to place.
+/// Whether the model is asked to look for a request at all — and now only about whether there is
+/// anything to place.
 @Suite("Asking the model about the clipboard")
 struct ClipboardRequestTests {
     private func mode(pastes: Bool = true) -> Mode {
@@ -552,13 +596,13 @@ struct ClipboardNeedsTheModelTests {
 struct ClipboardPromptTests {
     @Test("No clipboard means no clipboard block")
     func omitsTheBlockWhenThereIsNothing() {
-        let prompt = OnDeviceRefiner.prompt(for: "ship it on tuesday", context: nil, placeClipboard: false)
+        let prompt = OnDeviceRefiner.prompt(for: "ship it on tuesday", context: nil)
         #expect(!prompt.contains("CLIPBOARD"))
     }
 
     @Test("The clipboard is delimited and marked as reference, never as instructions")
     func fencesTheClipboard() {
-        let prompt = OnDeviceRefiner.prompt(for: "send it to kruhlov", context: "Denys Kruhlov", placeClipboard: false)
+        let prompt = OnDeviceRefiner.prompt(for: "send it to kruhlov", context: "Denys Kruhlov")
 
         #expect(prompt.contains("<<<CLIPBOARD"))
         #expect(prompt.contains("CLIPBOARD>>>"))
@@ -574,26 +618,19 @@ struct ClipboardPromptTests {
         #expect(cleaned == "Send it to Kruhlov this afternoon.")
     }
 
-    @Test("No placeholder means the model is never asked to place anything")
-    func omitsThePlacementRequestWhenNotAsked() {
-        let prompt = OnDeviceRefiner.prompt(for: "ship it on tuesday", context: nil, placeClipboard: false)
+    @Test("A transcript with no marker in it is told nothing about markers")
+    func omitsThePlaceholderNoteWithoutAMarker() {
+        let prompt = OnDeviceRefiner.prompt(for: "ship it on tuesday", context: nil)
         #expect(!prompt.contains(ClipboardContext.marker))
     }
 
-    @Test("The placement request names the marker exactly and leaves the model a veto")
-    func asksForTheMarker() {
+    @Test("A transcript with the marker in it is told to leave it alone")
+    func asksForTheMarkerToSurviveCleanup() {
         let prompt = OnDeviceRefiner.prompt(
-            for: "here is the error, paste the clipboard, what is it",
-            context: nil,
-            placeClipboard: true
+            for: "here is the error, \(ClipboardContext.marker), what is it",
+            context: nil
         )
-
-        #expect(prompt.contains(ClipboardContext.marker))
-        // No phrase is named: the words are spoken, so any phrase written down in advance is the
-        // wrong one. The model is told what to look for, in any language, and told to write
-        // nothing when the sentence was only about the clipboard.
-        #expect(prompt.contains("in any language and in any wording"))
-        #expect(prompt.contains("only talking *about* the clipboard"))
+        #expect(prompt.contains("is a placeholder, not a word"))
     }
 
     @Test("A model that pastes the clipboard instead of the transcript is rejected")
@@ -603,5 +640,84 @@ struct ClipboardPromptTests {
         let original = "yes please send that one this afternoon"
         let clipboard = String(repeating: "This is the email I had copied. ", count: 5)
         #expect(OnDeviceRefiner.sanityChecked(clipboard, against: original) == nil)
+    }
+
+    @Test("A short utterance cannot be answered with a paragraph")
+    func rejectsAnEchoedPromptForAShortUtterance() {
+        // Short utterances were exempt from the ceiling, and a model shown a clipboard answered
+        // "Paste the clipboard." with the sentences of its own instructions. Measured, not
+        // imagined: it was pasted into the document.
+        let leaked = "The user has this on their clipboard. Use it only to spell names, terms and identifiers the way it does."
+        #expect(OnDeviceRefiner.sanityChecked(leaked, against: "Paste the clipboard.") == nil)
+    }
+}
+
+/// The lookup that finds the words asking for the clipboard. The model's side of it cannot run in
+/// CI — there is no 2.8 GB file there — so what is covered is everything around the answer: how it
+/// is read, what it is allowed to claim, and the shape of the prompt.
+@Suite("Finding the clipboard request")
+struct ClipboardRequestLookupTests {
+    @Test("A PASTE answer is the words it quotes, in the text's own spelling")
+    func readsAPasteAnswer() {
+        let text = "Here is the error, paste what I copied, what does it mean?"
+        #expect(OnDeviceRefiner.request(from: "PASTE: paste what I copied", in: text) == "paste what I copied")
+        // The model's capitals are not the sentence's, and the caller has to find it again.
+        #expect(OnDeviceRefiner.request(from: "PASTE: Paste What I Copied", in: text) == "paste what I copied")
+    }
+
+    @Test("Quotes and a full stop round the answer are not part of it")
+    func trimsWhatModelsWrapAnswersIn() {
+        let text = "Вставь содержимое буфера обмена."
+        #expect(OnDeviceRefiner.request(from: "PASTE: «Вставь содержимое буфера обмена».", in: text) == "Вставь содержимое буфера обмена")
+        #expect(OnDeviceRefiner.request(from: "  PASTE: \"Вставь содержимое буфера обмена\"\n", in: text) == "Вставь содержимое буфера обмена")
+    }
+
+    @Test("Every other label is not a request for the clipboard")
+    func ignoresTheOtherLabels() {
+        let text = "Copy this to the clipboard and paste the chart into slide three."
+        #expect(OnDeviceRefiner.request(from: "NONE", in: text) == nil)
+        #expect(OnDeviceRefiner.request(from: "COPY: Copy this to the clipboard", in: text) == nil)
+        #expect(OnDeviceRefiner.request(from: "OTHER: paste the chart into slide three", in: text) == nil)
+    }
+
+    @Test("An answer that is not in the text is not believed")
+    func rejectsWordsThatWereNeverSaid() {
+        // The one thing that makes a quoted substring safer than a rewrite: it can be checked, and
+        // a model that invents words — or quotes them out of its own examples — pastes nothing.
+        let text = "Ship it on Tuesday."
+        #expect(OnDeviceRefiner.request(from: "PASTE: paste what I copied", in: text) == nil)
+    }
+
+    @Test("An empty or unlabelled answer is nothing")
+    func rejectsAnswersWithNothingInThem() {
+        let text = "Paste the clipboard."
+        #expect(OnDeviceRefiner.request(from: "", in: text) == nil)
+        #expect(OnDeviceRefiner.request(from: "PASTE:", in: text) == nil)
+        #expect(OnDeviceRefiner.request(from: "Paste the clipboard", in: text) == nil)
+    }
+
+    @Test("The examples answer in the format they teach")
+    func examplesAreWellFormed() {
+        #expect(OnDeviceRefiner.requestExamples.count >= 20)
+        for example in OnDeviceRefiner.requestExamples {
+            let label = example.reply.split(separator: ":").first.map(String.init) ?? example.reply
+            #expect(["PASTE", "COPY", "OTHER", "NONE"].contains(label), "\(example.reply)")
+        }
+
+        // An example that teaches a quotation has to quote its own sentence, or it teaches the
+        // model to answer with words that are not there.
+        for example in OnDeviceRefiner.requestExamples where example.reply.hasPrefix("PASTE:") {
+            let sentence = example.prompt
+                .components(separatedBy: "<<<TRANSCRIPT\n").last?
+                .components(separatedBy: "\nTRANSCRIPT>>>").first ?? ""
+            #expect(OnDeviceRefiner.request(from: example.reply, in: sentence) != nil, "\(example.reply)")
+        }
+    }
+
+    @Test("The lookup sees the sentence and never the clipboard")
+    func lookupPromptHasNoClipboardBlock() {
+        let prompt = OnDeviceRefiner.requestPrompt(for: "Paste the clipboard.")
+        #expect(prompt.contains("<<<TRANSCRIPT\nPaste the clipboard.\nTRANSCRIPT>>>"))
+        #expect(!prompt.contains("<<<CLIPBOARD"))
     }
 }

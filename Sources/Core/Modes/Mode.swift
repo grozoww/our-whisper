@@ -33,9 +33,10 @@ struct Mode: Codable, Identifiable, Equatable, Sendable {
     /// shows it to the model and forbids it from repeating any of it, this one never shows it to
     /// the model at all and reproduces it exactly. Off everywhere by default, for the same reason.
     ///
-    /// Where it lands is the on-device model's decision, and if the model does not answer, nothing
+    /// Where it lands is found by the on-device model, which reads the sentence — never the
+    /// clipboard — and says which words asked for it. If it finds none, or does not answer, nothing
     /// is pasted. There is no phrase to configure, because the words are *spoken* and arrive
-    /// declined, split or reworded — see `ClipboardContext.substituted`.
+    /// declined, split or in another language — see `OnDeviceRefiner.clipboardRequest`.
     var pastesClipboard: Bool = false
 
     /// Bundle identifiers this mode claims. When "switch by app" is on, focusing one of these

@@ -10,19 +10,21 @@ import AppKit
 /// The two shapes are deliberately different. `reference` goes to the on-device model, capped, and
 /// never comes back out. `substituted` goes into the paste verbatim, because a stack trace or a
 /// block of code that has been shortened or reworded is worse than useless — but it goes only into
-/// the field the user was already about to paste into, only where the model said it goes, and
-/// nowhere else at all.
+/// the field the user was already about to paste into, only where the marker is, and nowhere else
+/// at all. The model that finds the request is never shown the clipboard to do it.
 enum ClipboardContext {
     /// Enough for an email, a stack trace or a page of notes; short enough that the model still
     /// answers inside its timeout. A copied document would blow both. This caps what the *model*
     /// is shown, never what is pasted.
     static let referenceLimit = 2000
 
-    /// The token the on-device model is asked to leave standing where the clipboard goes.
+    /// The token that stands where the clipboard goes, from the moment the request is found until
+    /// the paste.
     ///
-    /// Deliberately not prose: the model has to reproduce it character for character, and anything
-    /// that reads like words gets tidied into different words. Brackets and capitals are the shape
-    /// a small model copies most reliably, and no dictated sentence contains them by accident.
+    /// Deliberately not prose: the cleanup model sees it inside the transcript and has to hand it
+    /// back untouched, and anything that reads like words gets tidied into different words.
+    /// Brackets and capitals are the shape a small model copies most reliably, and no dictated
+    /// sentence contains them by accident.
     static let marker = "[[CLIPBOARD]]"
 
     /// Types that mean "this was not meant to be kept". `ConcealedType` is what 1Password and the
@@ -59,18 +61,40 @@ enum ClipboardContext {
         return String(text.prefix(referenceLimit)) + "…"
     }
 
-    /// The clipboard put where the model said it goes.
+    /// Writes `marker` over the words that asked for the clipboard.
+    ///
+    /// `request` is what `OnDeviceRefiner.clipboardRequest` found: the model's one job here is to
+    /// say *which words* ask, and this is the app doing the editing. Editing is the half a small
+    /// model gets wrong — asked to do both in one reply it wrote no marker for any of eight
+    /// phrasings — and a plain replacement of text the model has quoted cannot reword anything.
+    ///
+    /// Only the first occurrence, because the lookup quotes one request. A sentence that was
+    /// nothing but the request leaves its full stop behind, and pasting "‹clipboard›." would put
+    /// one on the end of whatever was copied; so when no letter or digit is left beside the
+    /// marker, the marker is all there is.
+    static func marking(_ request: String, in text: String) -> String {
+        guard !request.isEmpty, let range = text.range(of: request, options: .caseInsensitive) else { return text }
+
+        let marked = text.replacingCharacters(in: range, with: marker)
+        let beside = marked.replacingOccurrences(of: marker, with: "")
+        return beside.contains(where: { $0.isLetter || $0.isNumber }) ? marked : marker
+    }
+
+    static func hasMarker(_ text: String) -> Bool {
+        text.range(of: marker, options: .caseInsensitive) != nil
+    }
+
+    /// The clipboard put where `marking` left the marker.
     ///
     /// Saying so — "here is the error, paste what I copied, what does it mean?" — is how you wrap
-    /// what you copied in a sentence instead of leaving it dangling at the end. The model is asked
-    /// to leave `marker` at that spot, so by the time this runs the position is a literal and
-    /// there is nothing left to judge: the model did the judging, which is the part it is good at,
-    /// and handed back a token, which is the part a rule is good at.
+    /// what you copied in a sentence instead of leaving it dangling at the end. By the time this
+    /// runs the position is a literal and there is nothing left to judge.
     ///
     /// No phrase matching, deliberately. The words are spoken, so they never arrive as any phrase
-    /// written down in advance — the recogniser declines them, splits the compound, or the model
-    /// rewords them — and a rule loose enough to catch that is also loose enough to cut open a
-    /// sentence that was only *about* the clipboard.
+    /// written down in advance — the recogniser declines them, splits the compound, or says them
+    /// in another language — and a rule loose enough to catch that is also loose enough to cut open
+    /// a sentence that was only *about* the clipboard. The model reads the sentence, and the answer
+    /// it gives is checked against it: see `OnDeviceRefiner.request(from:in:)`.
     ///
     /// No marker means nothing is pasted. There used to be a fallback that put the clipboard after
     /// the text whenever the marker was missing, and it fired on every dictation the model was not
@@ -84,9 +108,8 @@ enum ClipboardContext {
     /// window would be a silently corrupted paste.
     ///
     /// What does *not* change is the ordering: this runs after the whole refinement pipeline, so
-    /// the model is never shown the text it is about to reproduce. Showing it gets a stack trace
-    /// reworded, and the length check in `OnDeviceRefiner` would then throw the answer away for
-    /// growing.
+    /// the model is never shown the text it is about to reproduce. It is not shown to the lookup
+    /// either — that call sees the sentence and nothing else.
     static func substituted(_ clipboard: String?, into text: String) -> String {
         // No clipboard, so a marker has nothing to stand for and must not reach the document.
         guard let clipboard, !clipboard.isEmpty else { return removingMarker(from: text) }

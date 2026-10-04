@@ -118,6 +118,26 @@ struct CleanupModelTests {
         #expect(segments.last?.text == "<turn|>\n<|turn>model\n")
     }
 
+    @Test("Examples are earlier turns, in order, with the real prompt last")
+    func examplesComeBeforeThePrompt() {
+        let segments = OnDeviceRefiner.segments(
+            instructions: "Look.",
+            prompt: "real",
+            examples: [.init(prompt: "first", reply: "one"), .init(prompt: "second", reply: "two")]
+        )
+
+        #expect(segments.filter { !$0.isMarkup }.map(\.text) == ["Look.", "first", "one", "second", "two", "real"])
+        #expect(segments.first?.text == "<|turn>system\n")
+        #expect(segments.last?.text == "<turn|>\n<|turn>model\n")
+        // Markup and text still alternate, so no example can end its own turn.
+        #expect(segments.map(\.isMarkup) == [
+            true, false,
+            true, false, true, false,
+            true, false, true, false,
+            true, false, true,
+        ])
+    }
+
     @Test("A model on disk starts as downloaded; a missing one as not downloaded")
     @MainActor
     func availabilityFollowsTheFile() throws {
