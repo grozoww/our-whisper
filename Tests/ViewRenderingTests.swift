@@ -217,6 +217,26 @@ struct ViewRenderingTests {
         _ = temp
     }
 
+    @Test("The icon picker builds with a catalogue icon, a custom one and a broken one", arguments: [
+        "sparkles",
+        "tortoise",
+        "not.a.symbol.at.all",
+        "",
+    ])
+    func rendersIconPicker(symbol: String) {
+        // The popover is its own window, so rendering the editor does not build it. It has a
+        // branch for each way the stored name can relate to the catalogue — on it, off it, or not
+        // a symbol at all — and a hand-edited modes file can hold any of them.
+        for tint in ModeColor.allCases {
+            render(
+                SymbolPickerPopover(symbol: .constant(symbol), tint: tint, dismiss: {}),
+                size: CGSize(width: 330, height: 420)
+            )
+        }
+        render(ModeIconButton(symbol: .constant(symbol), tint: .blue), size: CGSize(width: 120, height: 60))
+        render(TintSwatches(tint: .constant(.purple)), size: CGSize(width: 300, height: 100))
+    }
+
     @Test("The pill renders in every phase", arguments: [
         PillModel.Phase.listening,
         .transcribing,

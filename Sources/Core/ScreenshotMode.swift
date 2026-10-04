@@ -15,6 +15,7 @@ import SwiftUI
 ///     OURWHISPER_SCREENSHOT=modes OURWHISPER_SCREENSHOT_SIZE=880x560 <binary>
 ///     OURWHISPER_SCREENSHOT=modes OURWHISPER_SCREENSHOT_SIDEBAR=collapsed <binary>
 ///     OURWHISPER_SCREENSHOT=pill.listening <binary>
+///     OURWHISPER_SCREENSHOT=modes.icons <binary>
 ///
 /// The data in the picture is seeded below, never the user's: screenshot mode redirects
 /// `AppDirectories.support` to a throwaway directory, for the same reason the tests do.
@@ -30,6 +31,10 @@ enum ScreenshotMode {
                 return
             }
             switch rawValue {
+            // The Modes screen with the icon picker open. Not a README shot: the popover is a
+            // window of its own, so `screencapture -l` of the main window leaves it out. Take the
+            // whole display instead.
+            case "modes.icons": self = .section(.modes)
             case "pill.listening": self = .pill(.listening)
             case "pill.transcribing": self = .pill(.transcribing)
             case "pill.cleaning": self = .pill(.formatting)
@@ -71,6 +76,9 @@ enum ScreenshotMode {
     nonisolated static var requestedRawValue: String? {
         ProcessInfo.processInfo.environment["OURWHISPER_SCREENSHOT"]
     }
+
+    /// Whether the Modes editor should open its icon picker by itself.
+    nonisolated static var opensIconPicker: Bool { requestedRawValue == "modes.icons" }
 
     static var requested: Target? { requestedRawValue.flatMap(Target.init(rawValue:)) }
 

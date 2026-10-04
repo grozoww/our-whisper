@@ -507,6 +507,22 @@ asks again. Four decisions in it are not obvious:
 - **Skipping a version still sticks.** `skippedVersion` is passed to every periodic check, so
   "Skip" does not come back a day later; only a newer release does.
 
+**A menu item with a checkmark has no icon, and no SwiftUI spelling brings it back.** The Mode
+menu would read better with each mode's icon beside its name, and the current mode needs a checkmark.
+Measured on macOS 26, each of these shows the checkmark and drops the image: a `Toggle` with a
+`Label`, a `Toggle` with a flat `Image` and `Text`, and an inline `Picker` of `Label`s. A plain
+`Button` keeps its image, which is how the menu used to mark the current mode — with a `checkmark`
+image on that one row. Icons without a checkmark would leave the person unable to tell which mode
+is on, so the menu stays as it is. To try again, drive it for real:
+`osascript` can click the status item and the "Mode" row through System Events, and
+`screencapture -x` photographs the open menu.
+
+**A popover's background is a see-through material, and a dense grid shows what is behind it.** The
+icon picker's first screenshot had orange smudges under some icons — the editor's switches, blurred
+through the popover — which read as those icons being selected. `SymbolPickerPopover` paints its own
+opaque background. The popover is also a window of its own, so `screencapture -l` of the main window
+leaves it out: `OURWHISPER_SCREENSHOT=modes.icons` opens it and the picture is the whole display.
+
 **Padding a `Section` pads every row in it.** In a `List`, `Section { rows }.padding(.top, 10)`
 does not put 10pt above the group — it puts 10pt above each row inside it, so the rows come out
 taller than the rows in the group above and their selection highlights come out taller with them.
@@ -730,9 +746,23 @@ dictation, including when the model is off. Anything needing judgement belongs i
 in the right screen. Never add a control without the sentence explaining it — `SettingsRow`
 requires a `detail` for that reason.
 
-**An assistant mode, the larger model, an icon picker for modes.** Asked for, not started — all
-three are written up, with the measurements that shape them, in `docs/handoff-assistant-mode.md`.
-Read it before touching `Mode`, `ModesView` or the model.
+**An assistant mode, the larger model.** Asked for, not started — both are written up, with the
+measurements that shape them, in `docs/handoff-assistant-mode.md`. Read it before touching `Mode`,
+`ModesView` or the model. The icon picker from the same document is built.
+
+**A new icon for modes.** Add it to `ModeSymbols.all` with keywords in English and Russian (and
+Ukrainian where it differs). The name has to exist on macOS 15, the oldest the app runs on: a name
+from SF Symbols 7 passes `ModeSymbolsTests` on a Mac 26 and draws an empty square on a Mac 15. The
+availability table that settles it is Apple's `name_availability.plist` in
+`/System/Library/CoreServices/CoreGlyphs.bundle/Contents/Resources` — a private file, fine to read
+while choosing and never to ship from; a year of 2025 or later is too new.
+
+**A new colour for modes.** Add a case to `ModeColor`, and mind three things. The case order is the
+picker's layout — rows of `ModeColor.columns`, and a test fails on a ragged last row. The raw value
+is what a modes file stores, so never rename one: the first five (`orange`, `blue`, `purple`,
+`green`, `graphite`) are the old `AccentTint` names and are in every file ever written. And it must
+not be light, because `SectionIcon` draws a white glyph on it. `AccentTint` is a different thing —
+the *app's* accent in Configuration — and stays at five on purpose; do not add mode colours to it.
 
 **Anything users download.** `scripts/package.sh` builds the DMG and `scripts/install.sh` is the
 `curl | bash` that installs it. Every release is signed with the project's Developer ID and
@@ -816,7 +846,7 @@ anything depending on `mlx-swift` 0.31.5+ needs Xcode's separately-downloaded Me
 
 ## Testing
 
-Swift Testing, not XCTest. 280 tests, no network, no API key, no microphone, no permissions.
+Swift Testing, not XCTest. 304 tests, no network, no API key, no microphone, no permissions.
 
 - Cloud providers are tested against `StubHTTPClient` with recorded response shapes.
 - Every screen is built and laid out in `ViewRenderingTests` — a view that crashes on

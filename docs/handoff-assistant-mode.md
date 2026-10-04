@@ -5,12 +5,13 @@ For the next agent. Written on 2026-10-04 by the agent that built the clipboard 
 lands" explains most of what is true about the on-device model. This file is what that section does
 not say: three pieces of work the owner asked for and nobody has started.
 
-Nothing below is built. Where a number is given it was measured on an M1 Max with the real model, and
-the sentence says so. Where something is a recommendation, it says that.
+**B (the icon picker) is built** — see the note at the top of that section. A and C are not. Where a
+number is given it was measured on an M1 Max with the real model, and the sentence says so. Where
+something is a recommendation, it says that.
 
-Suggested order, one pull request each: **B** (icon picker — small, independent, the owner dislikes
-the current text field), then **A** (the assistant mode), then **C** (the larger model, decided by
-measurement). C can come before A if you want A built on the model it will ship with.
+Suggested order, one pull request each: **B** (icon picker — done), then **A** (the assistant mode),
+then **C** (the larger model, decided by measurement). C can come before A if you want A built on
+the model it will ship with.
 
 ---
 
@@ -201,6 +202,15 @@ There is no CI for the model. Build the measurement before the prompt:
 ---
 
 ## B. Icon picker for modes
+
+> **Built.** `Sources/UI/Modes/ModeSymbols.swift` is the catalogue (135 symbols in six categories,
+> English, Russian and Ukrainian keywords), `ModeIconPicker.swift` is the button, the popover and the
+> colour chips, `Tests/ModeSymbolsTests.swift` covers it. Two things differ from what is written
+> below. The Mode menu in the menu bar does **not** show the icons — a SwiftUI menu item with a
+> checkmark drops its image, measured, see CLAUDE.md. And the colour is not `AccentTint`'s five: the
+> owner asked for 20–30 so that many modes can be told apart, so `Sources/Core/Modes/ModeColor.swift`
+> is a separate thirty-colour palette with the same five raw values first (existing files keep their
+> colours), shown as a 10×3 grid of chips. The rest of this section is the original brief.
 
 ### The problem
 

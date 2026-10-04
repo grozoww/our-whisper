@@ -114,19 +114,16 @@ private struct ModeEditor: View {
                         .frame(minWidth: 110, idealWidth: 200, maxWidth: 200)
                 }
                 RowDivider()
-                SettingsRow(symbol: "paintpalette", title: "Colour") {
-                    Picker("Colour", selection: $draft.tint) {
-                        ForEach(AccentTint.allCases) { tint in
-                            Text(tint.title).tag(tint)
-                        }
-                    }
-                    .frame(minWidth: 110, idealWidth: 140, maxWidth: 140)
+                SettingsRow(
+                    symbol: "square.grid.2x2",
+                    title: "Icon",
+                    detail: "Shown beside this mode in the list on the left."
+                ) {
+                    ModeIconButton(symbol: $draft.symbol, tint: draft.tint)
                 }
                 RowDivider()
-                SettingsRow(symbol: "star", title: "Symbol", detail: "Any SF Symbol name.") {
-                    TextField("Symbol", text: $draft.symbol)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(minWidth: 110, idealWidth: 200, maxWidth: 200)
+                SettingsRow(symbol: "paintpalette", title: "Colour") {
+                    TintSwatches(tint: $draft.tint)
                 }
             }
 
