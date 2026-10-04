@@ -85,6 +85,14 @@ enum SelfTest {
         ProcessInfo.processInfo.environment["OURWHISPER_SELFTEST_CLEANUP"]
     }
 
+    /// Text to treat as the clipboard during the cleanup self-test, so the clipboard path can be
+    /// run without touching — or needing — the real pasteboard. The mode under test gets "Paste the
+    /// clipboard where you ask for it"; adding `OURWHISPER_SELFTEST_CLIPBOARD_CONTEXT=1` shows the
+    /// cleanup model the clipboard as well, which is the other way a prompt can go wrong.
+    static var requestedClipboard: String? {
+        ProcessInfo.processInfo.environment["OURWHISPER_SELFTEST_CLIPBOARD"]
+    }
+
     @MainActor
     static func runCleanup(
         _ text: String,
@@ -102,17 +110,37 @@ enum SelfTest {
         }
         log.info("Model ready after \(String(describing: ContinuousClock.now - start), privacy: .public)")
 
-        let mode = modes.resolve(settings: settings, frontmostBundleID: nil)
-        for attempt in 1...2 {
-            let begun = ContinuousClock.now
-            let cleaned = await refiner.refine(
-                text,
-                instructions: mode.instructions,
-                context: nil,
-                placeClipboard: false,
-                timeout: .seconds(max(1, settings.modelTimeoutSeconds))
-            )
-            log.info("RESULT \(attempt) [\(mode.name, privacy: .public), \(String(describing: ContinuousClock.now - begun), privacy: .public)]: \(cleaned ?? "nil, rules only", privacy: .public)")
+        // Through the real pipeline, so what is logged is what a dictation would have pasted. The
+        // switches are forced on: asking for a self-test of the model means wanting the model.
+        var settings = settings
+        settings.isEnabled = true
+        settings.useCleanupModel = true
+        var mode = modes.resolve(settings: settings, frontmostBundleID: nil)
+        let clipboard = requestedClipboard
+        if clipboard != nil {
+            mode.pastesClipboard = true
+            mode.usesClipboardContext = ProcessInfo.processInfo.environment["OURWHISPER_SELFTEST_CLIPBOARD_CONTEXT"] != nil
+        }
+        let pipeline = RefinementPipeline(onDevice: refiner)
+        // As a dictation does while the person is still speaking, so what is timed is the lookup
+        // and not the one-off reading of its examples.
+        if clipboard != nil { await pipeline.warmUpClipboardLookup() }
+
+        // `||` separates sentences, so one launch — one model load — covers a whole set.
+        for sentence in text.components(separatedBy: "||").map({ $0.trimmingCharacters(in: .whitespaces) }) {
+            for attempt in 1...2 {
+                let begun = ContinuousClock.now
+                let result = await pipeline.refine(
+                    sentence,
+                    mode: mode,
+                    settings: settings,
+                    vocabulary: [],
+                    language: .auto,
+                    clipboard: clipboard
+                )
+                let pasted = ClipboardContext.substituted(mode.pastesClipboard ? clipboard : nil, into: result.text)
+                log.info("RESULT \(attempt) [\(mode.name, privacy: .public), \(String(describing: ContinuousClock.now - begun), privacy: .public), model \(result.usedModel ? "yes" : "no", privacy: .public)] \"\(sentence, privacy: .public)\" -> \(result.text, privacy: .public) | pasted: \(pasted, privacy: .public)")
+            }
         }
         log.info("Cleanup self-test finished; quitting")
         NSApplication.shared.terminate(nil)

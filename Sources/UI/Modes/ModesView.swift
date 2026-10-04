@@ -173,12 +173,12 @@ private struct ModeEditor: View {
             SettingsSection(
                 title: "Clipboard",
                 subtitle: modelIsAvailable
-                    ? "For handing something you copied to the app you are dictating into. Gemma 4 works out where in your sentence you asked for it."
-                    : "Needs Gemma 4, which is what works out where in your sentence you asked for the clipboard. \(appState.onDeviceRefiner.availability.explanation)"
+                    ? "For handing something you copied to the app you are dictating into. Gemma 4 reads your sentence to find where you asked for it."
+                    : "Needs Gemma 4, which is what finds where in your sentence you asked for the clipboard. \(appState.onDeviceRefiner.availability.explanation)"
             ) {
                 toggle(
                     "Paste the clipboard where you ask for it",
-                    "Copy a stack trace or a message, say what you want done about it, and both arrive in one paste — exactly as it was copied. Ask for it mid-sentence, in any language and any wording, and it lands right there. Say nothing about it and nothing is pasted, so this can stay on. The model never sees what you copied and never rewrites it, it never leaves the Mac, it is not kept in History, and a password copied from a password manager is skipped.",
+                    "Copy a stack trace or a message, say what you want done about it, and both arrive in one paste — exactly as it was copied. Ask for it mid-sentence, in any language and any wording, and it lands right there. Say nothing about it, or only talk about it, and nothing is pasted, so this can stay on. It adds about half a second. Gemma 4 reads only your sentence, to find the words that ask; the app puts the copied text in itself, so nothing is reworded or shortened. It never leaves the Mac, it is not kept in History, and a password copied from a password manager is skipped.",
                     "doc.on.clipboard.fill",
                     $draft.pastesClipboard
                 )

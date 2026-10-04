@@ -24,10 +24,16 @@ final class RefinementPipeline {
     }
 
     /// `clipboard` is what the user had copied when they started speaking, or nil when nothing
-    /// read it. Whether the model is shown it at all is the mode's decision, made here so there is
-    /// one place to look for the answer to "why did the model see my clipboard". Pasting it is a
-    /// different toggle and happens after this, in `DictationController` — the model is never
+    /// read it. Whether the cleanup model is shown it is the mode's decision, made here so there
+    /// is one place to look for the answer to "why did the model see my clipboard". Pasting it is
+    /// a different toggle and happens after this, in `DictationController` — the model is never
     /// shown the text it is about to paste verbatim.
+    ///
+    /// Where the clipboard goes is settled before cleanup, not by it. The lookup reads the sentence
+    /// and quotes the words that ask for the clipboard; they become a marker; cleanup then runs on
+    /// a sentence that already has the marker in it and has only to leave it alone. The other
+    /// order — one prompt that cleans *and* places — was measured against Gemma 4 E2B and wrote no
+    /// marker for any of eight phrasings, see `OnDeviceRefiner.clipboardRequest`.
     func refine(
         _ raw: String,
         mode: Mode,
@@ -43,15 +49,34 @@ final class RefinementPipeline {
 
         guard willUseModel(settings, mode: mode) else { return Result(text: cleaned, usedModel: false) }
 
+        let timeout = Duration.seconds(max(1, settings.modelTimeoutSeconds))
+
+        // A quick question with a short answer, so it never gets the whole budget: a lookup that
+        // runs long should leave the cleanup its time rather than spend it.
+        var marked = cleaned
+        if Self.shouldPlaceClipboard(mode: mode, clipboard: clipboard),
+           let request = await onDevice.clipboardRequest(in: cleaned, timeout: min(timeout, .seconds(4))) {
+            marked = ClipboardContext.marking(request, in: cleaned)
+        }
+        let placed = marked != cleaned
+
+        // A sentence that was only the request is now only the marker, and there is nothing in it
+        // to clean. Asking anyway got the answer thrown away as implausible every time.
+        if marked == ClipboardContext.marker { return Result(text: marked, usedModel: true) }
+
         let refined = await onDevice.refine(
-            cleaned,
+            marked,
             instructions: mode.instructions,
             context: mode.usesClipboardContext ? clipboard.map(ClipboardContext.reference) : nil,
-            placeClipboard: Self.shouldPlaceClipboard(mode: mode, clipboard: clipboard),
-            timeout: .seconds(max(1, settings.modelTimeoutSeconds))
+            timeout: timeout
         )
 
-        guard let refined else { return Result(text: cleaned, usedModel: false) }
+        // The marker is the only thing that knows where the clipboard goes, so a cleanup that lost
+        // it has lost the paste. That answer is thrown away like any other implausible one, and
+        // the rule-cleaned sentence — marker included — is what goes on.
+        guard let refined, !placed || ClipboardContext.hasMarker(refined) else {
+            return Result(text: marked, usedModel: placed)
+        }
 
         // Vocabulary is re-applied after the model. A rewrite can undo a substitution by restating
         // the name in the model's preferred spelling, and the vocabulary list is the user telling
@@ -66,6 +91,11 @@ final class RefinementPipeline {
 
         log.debug("Refined with the on-device model")
         return Result(text: final, usedModel: true)
+    }
+
+    /// Gets the clipboard lookup ready. See `OnDeviceRefiner.warmUpClipboardLookup`.
+    func warmUpClipboardLookup() async {
+        await onDevice.warmUpClipboardLookup()
     }
 
     /// Whether the on-device model can run at all: switched on, and available on this Mac.
@@ -120,16 +150,15 @@ final class RefinementPipeline {
         ) && !instructions.isEmpty
     }
 
-    /// Whether to ask the model where the clipboard goes. There is nothing to weigh: if the mode
-    /// pastes the clipboard and there is one, the model is asked.
+    /// Whether to look for a request for the clipboard at all. There is nothing to weigh: if the
+    /// mode pastes the clipboard and there is one, the model is asked.
     ///
     /// There used to be a word list here — the transcript had to contain "clipboard", "буфер" and
-    /// so on before the request went in the prompt, on the argument that the model should decide
+    /// so on before the request was looked for, on the argument that the model should decide
     /// *where* and never *whether*. That argument stopped holding once a missing marker meant the
     /// clipboard was not pasted at all: a list of nouns then decides, silently, that "paste what I
     /// copied" is not a request, and the user's clipboard never arrives. A list can only be wrong
-    /// in that direction, and the prompt already tells the model to write nothing when the
-    /// sentence was not asking. The whether is the model's too.
+    /// in that direction. The lookup says NONE for a sentence that was not asking.
     nonisolated static func shouldPlaceClipboard(mode: Mode, clipboard: String?) -> Bool {
         mode.pastesClipboard && !(clipboard ?? "").isEmpty
     }

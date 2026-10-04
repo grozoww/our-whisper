@@ -1,0 +1,101 @@
+# Sentences for scripts/eval-clipboard.sh: P = asks for the clipboard to be pasted, N = does not.
+# Tab-separated. Several are near misses on purpose — copying TO the clipboard, pasting something
+# ELSE, only talking about it. None is an example in OnDeviceRefiner.requestExamples.
+P	Paste the clipboard.
+P	Paste the clipboard content.
+P	Please paste the content of the clipboard here.
+P	Here is the error, paste what I copied, what does it mean?
+P	Вставь содержимое буфера обмена.
+P	Вставь сюда, пожалуйста, всё, что у меня в буфере обмена.
+P	Встав сюди вміст буфера обміну.
+P	Скопируй из буфера обмена и вставь сюда.
+P	Вот текст ошибки, вставь буфер обмена, и объясни, что это значит.
+P	Ось помилка, встав те, що я скопіював, і поясни її.
+P	Paste what I copied.
+P	Here is the code. Paste the clipboard. Why does it fail?
+P	Hey Anna, here is the link: paste the clipboard. Thanks!
+P	Take a look at this, paste the clipboard.
+P	So the question is, paste what is in my clipboard, why does it crash?
+P	Вот, смотри: вставь из буфера обмена. Почему оно падает?
+P	Hey, paste what I just copied.
+P	Вставь сюда то, что я только что скопировал.
+P	Встав, будь ласка, скопійований текст.
+P	Insert the clipboard here.
+P	Вставь буфер.
+P	Paste from the clipboard.
+P	Вставь скопированное.
+P	Вставь то, что в буфере обмена, и добавь подпись.
+P	Ось що в мене в буфері, встав його сюди.
+P	Paste whatever is on my clipboard and then add a thank you.
+P	Теперь вставь то, что лежит в буфере обмена.
+P	And here is the stack trace, paste the clipboard, so can you help me?
+N	The clipboard is not working again, I will check it tomorrow.
+N	Ship it on Tuesday and tell Denys.
+N	Copy this to the clipboard and send it to Anna.
+N	Скопируй это в буфер обмена.
+N	Буфер обмена опять не работает, я завтра посмотрю.
+N	I pasted the clipboard yesterday and it worked fine.
+N	Can you paste the report into the folder?
+N	Clear my clipboard history before the meeting.
+N	Мы вставим этот текст в документ позже.
+N	Ну короче, э, я хотел сказать, что мы завтра не успеем.
+N	Тест буфера обмена прошёл успешно.
+N	Не вставляй ничего из буфера обмена.
+N	Вставь картинку в слайд номер три.
+N	Скопируй этот файл на флешку.
+N	Copy the file to the desktop.
+N	I copied the wrong file yesterday.
+N	My clipboard manager keeps crashing.
+N	The paste shortcut stopped working in Safari.
+N	Сочетание клавиш для вставки не работает.
+N	Я вчера скопировал не тот файл.
+N	Менеджер буфера обмена постоянно падает.
+N	Нужно будет вставить логотип в шапку сайта.
+N	Paste the logo into the header of the page.
+N	Скопируй это в буфер.
+N	Скопируй текст в буфер обмена и отправь мне.
+N	Скопіюй це в буфер обміну.
+N	Положи это в буфер обмена.
+N	Put this on the clipboard.
+N	Please clear the clipboard.
+N	Is there anything on the clipboard right now?
+N	Paste the screenshot into the ticket and assign it to me.
+N	We should talk about how the clipboard history works.
+N	Скопируй номер заказа в буфер и вставь его в письмо клиенту.
+N	Спасибо, что скопировал мне ссылку вчера.
+N	Remind me to copy the invoice number tomorrow.
+P	Okay so, paste the clipboard, and then tell me if this makes sense.
+P	Can you read this, paste what I have copied, and summarize it?
+P	Paste the contents of my clipboard below this line.
+P	I want you to look at the following, paste the clipboard.
+P	Insert the clipboard text here, please.
+P	Hi team, please see the notes: paste the clipboard. Thanks!
+P	Вот отчёт, вставь из буфера обмена, пожалуйста.
+P	Вставь, пожалуйста, текст из буфера обмена.
+P	Слушай, вставь то, что я скопировал, и переведи на английский.
+P	Вставь здесь содержимое моего буфера обмена.
+P	Вот письмо клиента: вставь скопированный текст. Как мне ответить?
+P	Ось код, встав вміст буфера обміну, що тут не так?
+P	Встав сюди те, що я скопіював, будь ласка.
+P	Please paste whatever I copied just now.
+P	Paste the copied text after this sentence.
+N	The clipboard history is useful when you copy many things.
+N	Copy the selected text to the clipboard.
+N	Please copy the address to the clipboard.
+N	Do not paste anything from the clipboard yet.
+N	Paste the header into the template and save it.
+N	Paste this paragraph into the second section.
+N	I forgot what I copied yesterday.
+N	We need to meet on Monday and discuss the budget.
+N	Why does the paste command fail in this terminal?
+N	Скопируй адрес в буфер обмена, пожалуйста.
+N	Скопіюй адресу в буфер обміну, будь ласка.
+N	Вставь этот график во второй слайд и отправь презентацию.
+N	Вставьте, пожалуйста, подпись в конец письма.
+N	Буфер обмена у меня сегодня глючит.
+N	Что-то не так с копированием и вставкой в этом приложении.
+N	Я скопировал нужный абзац, но забыл, куда его вставить.
+N	Встав цей рядок у файл конфігурації.
+N	Моя історія буфера обміну зберігає лише п'ять записів.
+N	Thanks for the update, I will review it tonight and get back to you.
+N	Нужно скопировать ссылку и отправить её после обеда.

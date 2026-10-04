@@ -219,6 +219,13 @@ final class DictationController {
         let modelCanRun = refinement.modelIsEnabled(settings.settings.refinement)
         clipboardContext = modelCanRun && modes.anyModeReadsClipboard ? injector.userClipboard() : nil
 
+        // The lookup that finds where the clipboard goes has two seconds of examples to read the
+        // first time, and the person is about to talk for longer than that. Only when there is a
+        // clipboard to place, and a mode that would ask.
+        if clipboardContext != nil, modes.anyModePastesClipboard {
+            Task { await refinement.warmUpClipboardLookup() }
+        }
+
         do {
             try capture.start(deviceUID: settings.settings.sound.inputDeviceUID)
         } catch {

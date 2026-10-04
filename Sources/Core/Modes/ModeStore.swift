@@ -49,6 +49,12 @@ final class ModeStore {
         modes.contains { $0.usesClipboardContext || $0.pastesClipboard }
     }
 
+    /// Whether a mode could ask the model to look for a request for the clipboard — which is the
+    /// only thing worth getting ready ahead of time.
+    var anyModePastesClipboard: Bool {
+        modes.contains(where: \.pastesClipboard)
+    }
+
     // MARK: - Editing
 
     func update(_ mode: Mode) {

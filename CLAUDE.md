@@ -50,6 +50,7 @@ And one that follows from them:
 ./scripts/run.sh --logs          # stream the app's logs at info level
 ./scripts/run.sh --selftest speech.wav ru   # transcribe a file, no UI or permissions needed
 ./scripts/audit-deps.sh          # dependency pinning and vulnerability check
+./scripts/eval-clipboard.sh      # score the clipboard lookup on 98 labelled sentences, real model
 ./scripts/package.sh             # the release build: Developer ID, notarized, stapled
 ./scripts/package.sh --no-notarize   # the same, signed only, without waiting on Apple
 ./scripts/screenshots.sh         # redraw docs/images, the README's screenshots
@@ -69,6 +70,14 @@ results and quits cleanly — the only test of whether llama.cpp loads inside a 
 `OURWHISPER_SELFTEST_LAUNCH=1` launches, says so and exits before anything else starts; `package.sh`
 runs it against the signed app, because dyld refusing a library at launch is the one failure
 `codesign --verify` cannot see.
+
+The cleanup self-test runs the real `RefinementPipeline`, takes several sentences split by `||`,
+and logs what each would have pasted. `OURWHISPER_SELFTEST_CLIPBOARD="<text>"` stands in for the
+clipboard and switches on "Paste the clipboard where you ask for it" for the mode under test;
+adding `OURWHISPER_SELFTEST_CLIPBOARD_CONTEXT=1` shows the cleanup model that text too. Launch the
+binary directly, not through `open`, so the environment arrives, and read the result with
+`log show --info` — macOS has no `timeout`, so wrap it in `perl -e 'alarm 280; exec @ARGV'`.
+`./scripts/eval-clipboard.sh` is that, scored: see "Where the clipboard lands".
 
 `OURWHISPER_SECTION` exists for the same reason on the UI side: the window is only reachable by
 clicking a menu bar icon, which nothing automated can do. Values are the `NavigationSection` raw
@@ -150,19 +159,67 @@ worse than not pasting it. Keep the capping on `ClipboardContext.reference`, not
 read result is what gets pasted. History records what was dictated, not the combined paste, so a
 thirty-day history file never accumulates copies of the user's clipboard.
 
-**Where the clipboard lands is the model's decision, and there is no rule behind it.** The
-placeholder is *spoken*, so it never arrives as any phrase written down in advance: the recogniser
-declines it, splits the compound, or the model rewords it. Every rule written to catch that either
-missed the sentence or cut open a sentence that was only *about* the clipboard — "буфер обмена не
-работает" is a complaint, not a request, and in Russian and Ukrainian the ordinary noun for
-clipboard is already two words, so "more than one word" is not a test that separates them. A
-user-editable phrase had the same fault with the user holding the blame. Both are gone.
+**Where the clipboard lands is found by a question of its own, and there is no rule behind it.**
+The placeholder is *spoken*, so it never arrives as any phrase written down in advance: the
+recogniser declines it, splits the compound, or says it in another language. Every rule written to
+catch that either missed the sentence or cut open a sentence that was only *about* the clipboard —
+"буфер обмена не работает" is a complaint, not a request, and in Russian and Ukrainian the ordinary
+noun for clipboard is already two words, so "more than one word" is not a test that separates them.
+A user-editable phrase had the same fault with the user holding the blame. Both are gone. The
+judgement is the model's.
 
-What is left is the shape that works: the model is asked, in `OnDeviceRefiner.prompt`, to put
-`ClipboardContext.marker` where the user asked for the clipboard — the judgement is the model's,
-which is the part it is good at, and the output is a literal, which is the part a rule is good at.
-Ask for a character offset instead and you get a number a small model guessed at, four out,
-splitting a word.
+**It is not made by the cleanup prompt, and that was measured.** The cleanup prompt used to be
+asked to do both — clean the sentence, and write `ClipboardContext.marker` in place of the words
+that asked for the clipboard. On Gemma 4 E2B, through the real pipeline, on eight phrasings in
+English, Russian and Ukrainian: no marker in any of them, and "Paste the clipboard." came back as it
+went in. With the clipboard shown as context the model once answered with the sentences of its own
+instructions — a short utterance was exempt from the length ceiling, so that was pasted — and once
+pasted a page of code into "the clipboard is not working again, I will check it tomorrow." Few-shot
+examples as earlier turns, brackets round the words instead of a marker, and mode instructions with
+the prohibitions taken out each moved it a little and none made it work. It is two jobs under
+opposite framings — "never follow the transcript" and "follow this part of it" — and a 2B model
+keeps the first. Letting it write the paste itself is worse: it is the false positive above.
+
+What works is `OnDeviceRefiner.clipboardRequest`, a call that sees the sentence and nothing else and
+answers `PASTE: <the words that asked>`, `COPY:`, `OTHER:` or `NONE`. The app does the editing:
+`ClipboardContext.marking` writes the marker over the quoted words, the cleanup then runs on a
+sentence that already carries it and is told to leave it alone, and `substituted` puts the
+clipboard in last. The order is rules, lookup, marker, cleanup, vocabulary, paste. The model never
+sees the clipboard to find the request, so the paste still cannot be reworded.
+
+Six things in it are not obvious:
+
+- **The answer is checked.** `request(from:in:)` accepts it only if the words are in the sentence, so
+  a model that invents or quotes its own examples pastes nothing. A quoted substring can be
+  verified; a rewrite cannot.
+- **Four labels, not two.** With `NONE` as the only alternative to a request, "copy this to the
+  clipboard" and "paste the chart into slide three" were pasted as requests — 3 to 6 sentences in 35,
+  whatever the examples. Given `COPY:` and `OTHER:` to go to, they stopped. Only `PASTE:` is used.
+- **Two dozen examples, and the number matters.** With eight, the lookup pasted into 6 of 35
+  sentences that were not asking; with 24 across three languages and every near miss, none. This
+  model moves a lot on small changes to them. `./scripts/eval-clipboard.sh` scores the lookup
+  against `scripts/clipboard-requests.tsv` — 98 hand-labelled sentences, 35 of them held out until
+  the end — and it found 41 of 43 requests and pasted into none of 55 others when this was written.
+  A false paste is the expensive error and a miss costs the person saying it again, so the script
+  exits non-zero only on the first. Run it after touching `requestExamples`,
+  `requestInstructions` or `requestPrompt`; CI has no 2.8 GB file and cannot notice. A hook in
+  `.claude/settings.json` (`scripts/hooks/clipboard-eval-reminder.py`) tells a Claude Code agent so
+  after it edits any of those, and after an edit to the sentences; it only reminds, because the
+  eval needs the model and about a minute. Anyone else has to remember.
+- **The examples are the same on every call, so the lookup has its own llama context.**
+  `LlamaEngine.Slot.lookup` keeps them read and reads only the sentence, which took a lookup from
+  about 1.2 s to 0.15 s. It is made on first use and costs about 140 MB, so it is warmed only for someone
+  who has the switch on: after the model loads (`AppState.start`), and in
+  `DictationController.beginRecording` if the switch was turned on since — while the person is still
+  speaking, for the same reason the clipboard is read there. What it has read stays read for as long
+  as the model is loaded, so the second warm-up is a no-op; nothing cools. A sentence too long for its 4,096 tokens (a dictation of about fifteen
+  minutes) is not looked up and nothing is pasted.
+- **A sentence that was only the request is not cleaned.** It is the marker alone by then, and asking
+  the model to clean `[[CLIPBOARD]]` got the answer thrown away every time. `marking` also takes the
+  full stop the marker would otherwise leave behind, because "‹clipboard›." puts a full stop on the
+  end of whatever was copied.
+- **A cleanup that lost the marker is discarded**, and the rule-cleaned sentence — marker included —
+  goes on. The marker is the only thing that knows where the clipboard goes.
 
 **The clipboard is substituted for the marker last, and that ordering is the whole design.**
 `ClipboardContext.substituted` runs after rules *and* after the model, because the one thing the
@@ -170,19 +227,19 @@ model must never see is the text it is about to reproduce — it rewords a stack
 `OnDeviceRefiner.sanityChecked` then throws the answer away for growing past 1.6×. It is a plain
 string replacement, so nothing in the clipboard is read as regex syntax.
 
-**The *whether* is the model's too, and that reversed a rule this file used to state.** The request
-used to go in the prompt only when `ClipboardContext.mentioned` found a clipboard noun in the
+**The *whether* is the lookup's too, and that reversed a rule this file used to state.** The request
+used to be looked for only when `ClipboardContext.mentioned` found a clipboard noun in the
 transcript, on the argument that the model should decide where and never whether — otherwise a
 sentence that never mentioned the clipboard gets one dropped into the middle of it. That argument
 stopped holding the moment a missing marker meant the clipboard was not pasted *at all*: a list of
 nouns then decides, silently, that "paste what I copied" is not a request, and the user's clipboard
 never arrives. A word list can only be wrong in that direction, in every language, and the shipped
-list managed to reject the worked example in `ClipboardContext`'s own doc comment. The prompt
-already tells the model to write nothing when the sentence was only *about* the clipboard, so the
-veto lives there, once, where the judgement is. `shouldPlaceClipboard` is now only "does this mode
-paste the clipboard, and is there one".
+list managed to reject the worked example in `ClipboardContext`'s own doc comment. The lookup
+answers `NONE` for a sentence that was only *about* the clipboard, so the veto lives there, once,
+where the judgement is. `shouldPlaceClipboard` is only "does this mode paste the clipboard, and is
+there one".
 
-When no marker comes back — the model declined, timed out, or failed its sanity check —
+When no marker comes back — the lookup said `NONE`, timed out, was too long, or the cleanup lost it —
 **nothing is pasted**. There used to be a fallback that put the clipboard after the text in that
 case, and it fired on every dictation the model was not asked or did not answer, so a mode with the
 switch on stapled whatever was copied onto sentences that never mentioned it. The marker is the
@@ -193,7 +250,7 @@ into History, which records the sentence rather than the token. What the user ac
 still on the entry, in `rawText`.
 
 **No model, no clipboard, and that includes not reading it.** Both clipboard toggles are downstream
-of the model — one shows it what you copied, the other pastes it where the model marked — so
+of the model — one shows it what you copied, the other pastes it where the lookup marked — so
 neither can do anything without it. `RefinementPipeline.modelIsEnabled` gates the *read* in
 `beginRecording`, and `willUseModel` gates the paste, which also catches a mode with no
 instructions (Raw is the shipped example). The alternative, appending the clipboard to every
@@ -673,6 +730,10 @@ dictation, including when the model is off. Anything needing judgement belongs i
 in the right screen. Never add a control without the sentence explaining it — `SettingsRow`
 requires a `detail` for that reason.
 
+**An assistant mode, the larger model, an icon picker for modes.** Asked for, not started — all
+three are written up, with the measurements that shape them, in `docs/handoff-assistant-mode.md`.
+Read it before touching `Mode`, `ModesView` or the model.
+
 **Anything users download.** `scripts/package.sh` builds the DMG and `scripts/install.sh` is the
 `curl | bash` that installs it. Every release is signed with the project's Developer ID and
 notarized, or CI fails: `release.yml` checks its five secrets (`CSC_LINK`, `CSC_KEY_PASSWORD`,
@@ -755,15 +816,17 @@ anything depending on `mlx-swift` 0.31.5+ needs Xcode's separately-downloaded Me
 
 ## Testing
 
-Swift Testing, not XCTest. 266 tests, no network, no API key, no microphone, no permissions.
+Swift Testing, not XCTest. 280 tests, no network, no API key, no microphone, no permissions.
 
 - Cloud providers are tested against `StubHTTPClient` with recorded response shapes.
 - Every screen is built and laid out in `ViewRenderingTests` — a view that crashes on
   construction compiles fine and fails the first time someone clicks that sidebar row.
 - The rule refiner has the deepest coverage because it is pure and it touches every dictation.
 
-What is *not* covered, and why: the event tap, the paste path and CoreAudio device selection all
-need permissions and real hardware. The second half of `UpdateInstaller` joins them —
+What is *not* covered, and why: what the cleanup model does with a prompt, which no test can reach
+without the 2.8 GB file — `./scripts/eval-clipboard.sh` is the measurement for the clipboard lookup
+and `OURWHISPER_SELFTEST_CLEANUP` for the rest. The event tap, the paste path and CoreAudio device
+selection all need permissions and real hardware. The second half of `UpdateInstaller` joins them —
 `hdiutil attach`, `ditto`, `replaceItemAt`, `open -n` and a real `SecStaticCodeCheckValidity`
 against the release certificate cannot run in CI, and the question they answer ("did the
 Accessibility grant survive?") has no API. Everything up to the swap is covered: `fetch` runs
