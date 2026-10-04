@@ -16,6 +16,10 @@ import sys
 
 LOOKUP_FILE = "Sources/Core/Refinement/OnDeviceRefiner.swift"
 EXAMPLES_FILE = "scripts/clipboard-requests.tsv"
+OTHER_LANGUAGE_FILES = (
+    "scripts/clipboard-requests-intl.tsv",
+    "scripts/clipboard-requests-intl-heldout.tsv",
+)
 
 # What marks an edit as touching the lookup rather than the cleanup or the download code.
 LOOKUP_EDIT = re.compile(
@@ -26,11 +30,13 @@ LOOKUP_EDIT = re.compile(
 REMINDER = (
     "You edited the clipboard lookup, which is tuned against a real 2B model that moves a lot on "
     "small changes (24 examples to 8 took false pastes from 0 to 6 in 35 sentences), and CI has no "
-    "model to notice. Before you finish, run ./scripts/eval-clipboard.sh and report both numbers. "
+    "model to notice. Before you finish, run ./scripts/eval-clipboard.sh and report both numbers, "
+    "and run it on scripts/clipboard-requests-intl.tsv and scripts/clipboard-requests-intl-heldout.tsv "
+    "as well: an example added for one language moved the English set from 0 to 5 false pastes. "
     "It exits non-zero on any false paste, and a false paste is the error that matters: it puts "
-    "the clipboard into a sentence that never asked for it. Last measured: found 41 of 43 "
-    "requests, pasted into 0 of 55 others. If you changed scripts/clipboard-requests.tsv, "
-    "say what you changed and why."
+    "the clipboard into a sentence that never asked for it. Last measured: found 40 of 43 "
+    "requests, pasted into 0 of 55 others; other languages 15 of 16 and 27 of 30, 0 false of 66. "
+    "If you changed a .tsv file, say what you changed and why."
 )
 
 
@@ -54,7 +60,7 @@ def main():
     tool_input = payload.get("tool_input") or {}
     path = tool_input.get("file_path") or ""
 
-    if path.endswith(EXAMPLES_FILE):
+    if path.endswith(EXAMPLES_FILE) or path.endswith(OTHER_LANGUAGE_FILES):
         fires = True
     elif path.endswith(LOOKUP_FILE):
         text = edited_text(payload.get("tool_name", ""), tool_input)

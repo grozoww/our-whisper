@@ -1,0 +1,74 @@
+# Held out. Sentences for scripts/eval-clipboard.sh in the same eight languages as
+# clipboard-requests-intl.tsv, written afresh with different wording, plus Swedish, Danish, Finnish,
+# Romanian, Hungarian, Greek and Bulgarian, which have no example in OnDeviceRefiner.requestExamples
+# at all. P = asks for the clipboard to be pasted, N = does not. Not looked at while tuning the
+# examples, and not an example: do not copy a sentence from here into requestExamples. Written by a
+# model, not checked by a native speaker of each language, so a miss here may be a mistake in the sentence.
+P	Schau dir diese Fehlermeldung an, füge den Inhalt der Zwischenablage hier ein.
+P	Einfügen, was in meiner Zwischenablage ist, bitte.
+N	Kopier das bitte in die Zwischenablage und schick es Anna.
+N	Setz die Überschrift oben in das Dokument ein.
+N	Ich glaube, die Zwischenablage ist kaputt, weil sie ständig leer ist.
+P	Voilà le message d'erreur, colle ce qu'il y a dans le presse-papiers et traduis-le.
+P	Peux-tu coller le contenu de mon presse-papiers ici ?
+N	Copie cette adresse dans le presse-papiers puis envoie-la à Marie.
+N	Colle le titre au début du document, s'il te plaît.
+N	Je crois que le presse-papiers est cassé, il est toujours vide.
+P	Mira este error, pega lo que hay en el portapapeles y explícamelo.
+P	¿Puedes pegar aquí el contenido de mi portapapeles?
+N	Copia esta dirección al portapapeles y envíasela a Marta.
+N	Pega el título al principio del documento, por favor.
+N	Creo que el portapapeles está roto, siempre aparece vacío.
+P	Guarda questo errore, incolla ciò che c'è negli appunti e spiegamelo.
+P	Puoi incollare qui il contenuto dei miei appunti?
+N	Copia questo indirizzo negli appunti e mandalo a Marta.
+N	Incolla il titolo all'inizio del documento, per favore.
+N	Credo che gli appunti siano rotti, risultano sempre vuoti.
+P	Spójrz na ten błąd, wklej to, co jest w schowku, i wytłumacz mi go.
+P	Możesz wkleić tutaj zawartość mojego schowka?
+N	Skopiuj ten adres do schowka i wyślij go Marcie.
+N	Wklej tytuł na początku dokumentu, proszę.
+N	Chyba schowek się zepsuł, zawsze jest pusty.
+P	Olha este erro, cole o que está na área de transferência e me explique.
+P	Pode colar aqui o conteúdo da minha área de transferência?
+N	Copie este endereço para a área de transferência e envie para a Marta.
+N	Cole o título no início do documento, por favor.
+N	Acho que a área de transferência está quebrada, sempre aparece vazia.
+P	Kijk naar deze fout, plak wat er op het klembord staat en leg het uit.
+P	Kun je de inhoud van mijn klembord hier plakken?
+N	Kopieer dit adres naar het klembord en stuur het naar Marta.
+N	Plak de titel aan het begin van het document, alsjeblieft.
+N	Ik denk dat het klembord kapot is, het is altijd leeg.
+P	Podívej se na tuhle chybu, vlož to, co je ve schránce, a vysvětli mi ji.
+P	Můžeš sem vložit obsah mé schránky?
+N	Zkopíruj tuhle adresu do schránky a pošli ji Martě.
+N	Vlož nadpis na začátek dokumentu, prosím.
+N	Myslím, že schránka je rozbitá, pořád je prázdná.
+P	Titta på det här felet, klistra in det som ligger i urklipp och förklara det.
+P	Kan du klistra in innehållet i mitt urklipp här?
+N	Kopiera adressen till urklipp och skicka den till Maria.
+N	Jag tror att urklipp är trasigt, det är alltid tomt.
+P	Se på denne fejl, indsæt det der ligger i udklipsholderen og forklar det.
+P	Kan du indsætte indholdet af min udklipsholder her?
+N	Kopiér adressen til udklipsholderen og send den til Maria.
+N	Jeg tror udklipsholderen er i stykker, den er altid tom.
+P	Katso tätä virhettä, liitä leikepöydällä oleva teksti ja selitä se.
+P	Voitko liittää leikepöydän sisällön tähän?
+N	Kopioi osoite leikepöydälle ja lähetä se Marialle.
+N	Luulen että leikepöytä on rikki, se on aina tyhjä.
+P	Uită-te la eroarea asta, lipește ce e în clipboard și explică-mi-o.
+P	Poți lipi aici conținutul clipboardului meu?
+N	Copiază adresa în clipboard și trimite-o Mariei.
+N	Cred că clipboardul s-a stricat, e mereu gol.
+P	Nézd meg ezt a hibát, illeszd be, ami a vágólapon van, és magyarázd el.
+P	Be tudod illeszteni ide a vágólapom tartalmát?
+N	Másold a címet a vágólapra és küldd el Máriának.
+N	Szerintem elromlott a vágólap, mindig üres.
+P	Δες αυτό το σφάλμα, επικόλλησε ό,τι υπάρχει στο πρόχειρο και εξήγησέ το.
+P	Μπορείς να επικολλήσεις εδώ το περιεχόμενο του προχείρου μου;
+N	Αντίγραψε τη διεύθυνση στο πρόχειρο και στείλ' τη στη Μαρία.
+N	Νομίζω ότι το πρόχειρο χάλασε, είναι πάντα άδειο.
+P	Виж тази грешка, постави каквото има в клипборда и ми я обясни.
+P	Можеш ли да поставиш тук съдържанието на клипборда ми?
+N	Копирай адреса в клипборда и го изпрати на Мария.
+N	Мисля, че клипбордът е счупен, винаги е празен.

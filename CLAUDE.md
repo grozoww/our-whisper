@@ -206,6 +206,24 @@ Six things in it are not obvious:
   `.claude/settings.json` (`scripts/hooks/clipboard-eval-reminder.py`) tells a Claude Code agent so
   after it edits any of those, and after an edit to the sentences; it only reminds, because the
   eval needs the model and about a minute. Anyone else has to remember.
+- **Other languages are measured too, and adding an example for one language broke another.**
+  Parakeet hears 25 European languages and the lookup had examples in three. Two more sets are
+  scored by `./scripts/eval-clipboard.sh <file>`: `scripts/clipboard-requests-intl.tsv` (44
+  sentences in German, French, Spanish, Italian, Polish, Portuguese, Dutch and Czech, written to be
+  tuned against) and `scripts/clipboard-requests-intl-heldout.tsv` (68, written afterwards with other
+  wording, plus Swedish, Danish, Finnish, Romanian, Hungarian, Greek and Bulgarian, which have no
+  example at all, and not looked at while tuning). Written by a model, not checked by a native speaker
+  of each, so a miss may be a mistake in the sentence. Before any change: 10 of 16 and 26 of 30 found,
+  0 pasted wrongly of 66 — the long natural phrasing worked in every language, and what was missed
+  was the five-word "Füg ein, was ich kopiert habe". After eight examples for it (see the comment on
+  `requestExamples`, which lists what was tried and what each did): 15 of 16 and 27 of 30, 0 of 66,
+  and the English/Russian/Ukrainian set at 40 of 43 and 0 of 55, a miss more than before and well
+  inside what this model does on any change. In the seven languages with no example, 13 of 14 requests
+  were found (11 before). Run all three after touching the examples. The cost is context: the lookup
+  has 4,096 tokens, the examples are now an *estimated* 3,200 of them (by length, scaled from the
+  2,500 that 26 were), which leaves room for a sentence of about 900 tokens — a few minutes of speech
+  — where it was about 1,600. A longer one is not looked up and nothing is pasted, which is the safe
+  way to fail; raising `LlamaEngine.lookupContextLength` buys it back for about 70 MB.
 - **The examples are the same on every call, so the lookup has its own llama context.**
   `LlamaEngine.Slot.lookup` keeps them read and reads only the sentence, which took a lookup from
   about 1.2 s to 0.15 s. It is made on first use and costs about 140 MB, so it is warmed only for someone
