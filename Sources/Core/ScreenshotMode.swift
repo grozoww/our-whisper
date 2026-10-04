@@ -15,6 +15,7 @@ import SwiftUI
 ///     OURWHISPER_SCREENSHOT=modes OURWHISPER_SCREENSHOT_SIZE=880x560 <binary>
 ///     OURWHISPER_SCREENSHOT=modes OURWHISPER_SCREENSHOT_SIDEBAR=collapsed <binary>
 ///     OURWHISPER_SCREENSHOT=pill.listening <binary>
+///     OURWHISPER_SCREENSHOT=pill.picker <binary>
 ///     OURWHISPER_SCREENSHOT=modes.icons <binary>
 ///     OURWHISPER_SCREENSHOT=modes.assistant <binary>
 ///
@@ -24,7 +25,7 @@ import SwiftUI
 enum ScreenshotMode {
     enum Target {
         case section(NavigationSection)
-        case pill(PillModel.Phase)
+        case pill(PillModel.Phase, withModes: Bool = false, opens: Bool = false)
 
         init?(rawValue: String) {
             if let section = NavigationSection(rawValue: rawValue) {
@@ -43,6 +44,11 @@ enum ScreenshotMode {
             case "pill.transcribing": self = .pill(.transcribing)
             case "pill.cleaning": self = .pill(.formatting)
             case "pill.answering": self = .pill(.answering)
+            // The pill open into its mode picker, with the shipped modes.
+            case "pill.picker": self = .pill(.listening, withModes: true)
+            // Reported ready at once, with the picker still to open by itself: for photographing the
+            // opening a frame at a time.
+            case "pill.opening": self = .pill(.listening, withModes: true, opens: true)
             case "pill.pasted": self = .pill(.success("Pasted into Slack"))
             default: return nil
             }
@@ -106,7 +112,7 @@ enum ScreenshotMode {
 
         switch target {
         case .section(let section): await pose(section: section, appState: appState)
-        case .pill(let phase): await pose(pill: phase)
+        case .pill(let phase, let withModes, let opens): await pose(pill: phase, withModes: withModes, opens: opens)
         }
     }
 
@@ -138,16 +144,24 @@ enum ScreenshotMode {
         report("SCREENSHOT READY \(window.windowNumber)")
     }
 
-    private static func pose(pill phase: PillModel.Phase) async {
+    private static func pose(pill phase: PillModel.Phase, withModes: Bool, opens: Bool) async {
         let controller = PillWindowController()
         controller.show()
+        if withModes {
+            // Chosen by hand: the second shipped mode, so the ring is not on the first icon where
+            // it could be mistaken for the default.
+            controller.offerModes(Mode.builtIns.map(PillModeOption.init), selected: Mode.builtIns[1].id) { id in
+                controller.selectMode(id)
+            }
+            if !opens { controller.pillModel.isExpanded = true }
+        }
         // Bars frozen at a shape that reads as speech rather than the flat line of silence.
         for level in [0.35, 0.72, 0.28, 0.95, 0.55] as [Float] {
             controller.pillModel.push(level: level)
         }
         controller.setPhase(phase)
 
-        try? await Task.sleep(for: .milliseconds(900))
+        if !opens { try? await Task.sleep(for: .milliseconds(900)) }
 
         guard let number = controller.windowNumber else {
             report("SCREENSHOT FAILED no pill")

@@ -53,6 +53,11 @@ final class DictationController {
     private var levelTask: Task<Void, Never>?
     private var isRecording = false
 
+    /// The mode picked in the pill for the dictation being recorded, if one was. For this one only:
+    /// it is not written to the settings and does not touch "Switch by app", so the next dictation
+    /// is back to whatever the app and the menu bar say. Cleared when it is used or cancelled.
+    private var modeOverride: UUID?
+
     /// The assistant's answer in flight, so Escape can stop it.
     private var answerTask: Task<RefinementPipeline.AssistantResult, Error>?
 
@@ -260,9 +265,60 @@ final class DictationController {
         isRecording = true
         hotkeys.isRecording = true
         phase = .listening
+        modeOverride = nil
         playFeedback(settings.settings.sound.startSound)
         showPill(.listening)
+        offerModesInPill()
         startLevelUpdates()
+    }
+
+    /// For the pill that opens into a mode picker: every mode, the one this dictation would use
+    /// chosen. Chosen by what `resolve` says now — the app being typed into — which is what the
+    /// dictation will use unless somebody clicks another.
+    private func offerModesInPill() {
+        let appearance = settings.settings.appearance
+        guard appearance.showPill, appearance.pillStyle == .withModes else { return }
+
+        let current = modes.resolve(
+            settings: settings.settings.refinement,
+            frontmostBundleID: injector.targetBundleID
+        )
+        pill.offerModes(modes.modes.map(PillModeOption.init), selected: current.id) { [weak self] id in
+            self?.chooseMode(id)
+        }
+    }
+
+    /// A mode clicked in the pill while recording. Used for this dictation and no other.
+    ///
+    /// The clipboard has to follow the mode. It was read — or not — when recording began, for the
+    /// mode the app would have picked, and the mode the person has just clicked may want it where
+    /// the other did not (an assistant is the case that matters: it works on what you copied) or
+    /// not want it where the other did. Reading it now is as good as reading it then, because
+    /// nothing writes to the clipboard until the text is pasted, and dropping it is what keeps the
+    /// claim that it is read only for a mode that uses it.
+    private func chooseMode(_ id: UUID) {
+        guard isRecording, let mode = modes.modes.first(where: { $0.id == id }) else { return }
+        modeOverride = id
+        pill.selectMode(id)
+
+        let wantsClipboard = Self.needsClipboard(
+            for: mode,
+            modelCanRun: refinement.modelIsEnabled(settings.settings.refinement),
+            assistantMayRun: refinement.assistantMayRun
+        )
+        clipboardContext = wantsClipboard ? (clipboardContext ?? injector.userClipboard()) : nil
+
+        // The model reads in while the person finishes the sentence, as it does when recording starts.
+        if wantsClipboard, mode.kind == .assistant { Task { await refinement.warmUpAssistant() } }
+        if wantsClipboard, mode.pastesClipboard { Task { await refinement.warmUpClipboardLookup() } }
+    }
+
+    /// Whether a mode would use the clipboard, so whether to have read it.
+    nonisolated static func needsClipboard(for mode: Mode, modelCanRun: Bool, assistantMayRun: Bool) -> Bool {
+        switch mode.kind {
+        case .assistant: assistantMayRun
+        case .dictation: modelCanRun && (mode.usesClipboardContext || mode.pastesClipboard)
+        }
     }
 
     private func finishRecording() {
@@ -292,6 +348,7 @@ final class DictationController {
         stopLevelUpdates()
         _ = capture.stop()
         clipboardContext = nil
+        modeOverride = nil
         phase = .idle
         pill.hide()
         log.debug("Recording cancelled")
@@ -300,6 +357,8 @@ final class DictationController {
     private func transcribeAndInject(_ samples: [Float]) async {
         let current = settings.settings
         let clipboard = clipboardContext
+        let chosenInPill = modeOverride
+        modeOverride = nil
         // Nothing below needs it again, and holding a copy of someone's clipboard between
         // dictations is not something to do by accident.
         clipboardContext = nil
@@ -318,10 +377,12 @@ final class DictationController {
             // that had the keyboard, which is not always the frontmost one.
             await injector.confirmTarget()
 
-            let mode = modes.resolve(
-                settings: current.refinement,
-                frontmostBundleID: injector.targetBundleID
-            )
+            // A mode clicked in the pill beats the app and the saved choice, for this dictation.
+            let mode = chosenInPill.flatMap { id in modes.modes.first { $0.id == id } }
+                ?? modes.resolve(
+                    settings: current.refinement,
+                    frontmostBundleID: injector.targetBundleID
+                )
 
             // A different job from here on: the words are a request, not text to tidy.
             if mode.kind == .assistant {
