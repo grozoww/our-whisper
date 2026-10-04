@@ -76,6 +76,7 @@ struct MenuBarContent: View {
         case .listening: "Listening…"
         case .transcribing: "Transcribing…"
         case .formatting: "Cleaning up…"
+        case .answering: "Writing…"
         case .failed(let message): "Error: \(message)"
         }
     }

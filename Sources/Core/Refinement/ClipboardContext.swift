@@ -18,6 +18,16 @@ enum ClipboardContext {
     /// is shown, never what is pasted.
     static let referenceLimit = 2000
 
+    /// How much of the clipboard an *assistant* mode reads, about 1,500 tokens.
+    ///
+    /// Three times what `referenceLimit` lets the cleanup model see, because here the clipboard is
+    /// the thing being worked on rather than a spelling hint: a summary of the first 2,000
+    /// characters of a document is a wrong summary that looks right. Still a cap — the prompt has
+    /// to fit the assistant's context beside the answer — and still the head, for the reason
+    /// `reference` is. The person is told when it cut, because a confident answer to half a
+    /// document is the failure that costs the most.
+    static let materialLimit = 6000
+
     /// The token that stands where the clipboard goes, from the moment the request is found until
     /// the paste.
     ///
@@ -59,6 +69,12 @@ enum ClipboardContext {
     static func reference(_ text: String) -> String {
         guard text.count > referenceLimit else { return text }
         return String(text.prefix(referenceLimit)) + "…"
+    }
+
+    /// The clipboard as an assistant mode's material: capped at `materialLimit`, and whether it was.
+    static func material(_ text: String) -> (text: String, wasCut: Bool) {
+        guard text.count > materialLimit else { return (text, false) }
+        return (String(text.prefix(materialLimit)), true)
     }
 
     /// Writes `marker` over the words that asked for the clipboard.

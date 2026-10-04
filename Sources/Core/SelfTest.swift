@@ -116,6 +116,9 @@ enum SelfTest {
         settings.isEnabled = true
         settings.useCleanupModel = true
         var mode = modes.resolve(settings: settings, frontmostBundleID: nil)
+        // This measures cleanup. Whoever runs it may have an assistant mode chosen, whose
+        // instructions would answer the sentences instead of tidying them.
+        if mode.kind == .assistant { mode = Mode.builtIns[0] }
         let clipboard = requestedClipboard
         if clipboard != nil {
             mode.pastesClipboard = true
@@ -143,7 +146,180 @@ enum SelfTest {
             }
         }
         log.info("Cleanup self-test finished; quitting")
+        // A refiner made for a model override is not the app's, so the app's quit does not free it.
+        refiner.shutdown()
         NSApplication.shared.terminate(nil)
+    }
+
+    // MARK: - The assistant
+
+    /// A file of cases for the assistant mode, run through the real answer path, then quit.
+    ///
+    ///     OURWHISPER_SELFTEST_ASSISTANT=scripts/assistant-cases.tsv \
+    ///     OURWHISPER_SELFTEST_OUTPUT=/tmp/answers.json OurWhisper
+    ///
+    /// `./scripts/eval-assistant.sh` drives it and scores what comes out. The answers go to a file
+    /// rather than the log: nothing the user said or copied is ever logged, and a test of free
+    /// writing is mostly the text.
+    static var requestedAssistant: String? {
+        ProcessInfo.processInfo.environment["OURWHISPER_SELFTEST_ASSISTANT"]
+    }
+
+    static var requestedOutput: String? {
+        ProcessInfo.processInfo.environment["OURWHISPER_SELFTEST_OUTPUT"]
+    }
+
+    /// A GGUF file to run instead of the model the app would use. Development only, and read here
+    /// rather than stored in a setting: it exists so a larger model can be measured against the
+    /// shipped one without shipping it, and a setting would be a way to point the app at a file
+    /// nobody has checked. Works for the cleanup self-test as well, which is how the clipboard
+    /// lookup is scored on a second model.
+    static var modelOverride: URL? {
+        ProcessInfo.processInfo.environment["OURWHISPER_SELFTEST_MODEL"].map { URL(fileURLWithPath: $0) }
+    }
+
+    /// `refiner`, or a refiner for the override file if there is one. Never downloads anything: the
+    /// file is where it is, and a model with no URL to fetch cannot be fetched.
+    @MainActor
+    static func refiner(replacing refiner: OnDeviceRefiner, slot: LlamaEngine.Slot) -> OnDeviceRefiner {
+        guard let file = modelOverride else { return refiner }
+        let model = CleanupModel(
+            name: file.deletingPathExtension().lastPathComponent,
+            fileName: file.lastPathComponent,
+            url: file,
+            bytes: 0,
+            sha256: ""
+        )
+        return OnDeviceRefiner(model: model, slot: slot, directory: file.deletingLastPathComponent())
+    }
+
+    /// One row of the cases file.
+    struct AssistantCase: Equatable, Sendable {
+        var id: String
+        var request: String
+        var clipboard: String?
+    }
+
+    /// `id<TAB>request<TAB>clipboard<TAB>checks`, one case a line. The clipboard cell holds `\n`
+    /// for a newline, and `@repeat:N:text` for N copies of a text, which is how a clipboard longer
+    /// than the material limit is written without a page of it in the file. The checks are the
+    /// scorer's business and are not read here.
+    nonisolated static func assistantCases(from text: String) -> [AssistantCase] {
+        text.split(separator: "\n", omittingEmptySubsequences: true).compactMap { line in
+            guard !line.hasPrefix("#") else { return nil }
+            let cells = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard cells.count >= 3 else { return nil }
+            return AssistantCase(id: cells[0], request: cells[1], clipboard: decodedClipboard(cells[2]))
+        }
+    }
+
+    nonisolated static func decodedClipboard(_ cell: String) -> String? {
+        if cell.isEmpty { return nil }
+        if cell.hasPrefix("@repeat:") {
+            let parts = cell.dropFirst("@repeat:".count).split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let count = Int(parts[0]) else { return nil }
+            return String(repeating: parts[1], count: count)
+        }
+        return cell.replacingOccurrences(of: "\\n", with: "\n")
+    }
+
+    @MainActor
+    static func runAssistant(casesPath: String, refiner: OnDeviceRefiner) async {
+        log.info("Assistant self-test starting")
+        guard let text = try? String(contentsOfFile: casesPath, encoding: .utf8) else {
+            log.error("ASSISTANT SELFTEST FAILED: cannot read \(casesPath, privacy: .public)")
+            NSApplication.shared.terminate(nil)
+            return
+        }
+
+        // Only a file that is already here. `prepare()` would fetch 4.6 GB for a measurement the
+        // person did not ask to pay for; the override or the Models screen is how it gets here.
+        guard FileManager.default.fileExists(atPath: refiner.fileURL.path(percentEncoded: false)) else {
+            log.error("ASSISTANT SELFTEST FAILED: \(refiner.model.name, privacy: .public) is not on this Mac. Download it in Models, or set OURWHISPER_SELFTEST_MODEL to a file.")
+            NSApplication.shared.terminate(nil)
+            return
+        }
+        let loading = ContinuousClock.now
+        await refiner.prepare()
+        guard refiner.availability.isAvailable else {
+            log.error("ASSISTANT SELFTEST FAILED: \(refiner.availability.explanation, privacy: .public)")
+            NSApplication.shared.terminate(nil)
+            return
+        }
+        let loadSeconds = seconds(ContinuousClock.now - loading)
+        log.info("\(refiner.model.name, privacy: .public) ready after \(loadSeconds, format: .fixed(precision: 1))s")
+
+        let environment = ProcessInfo.processInfo.environment
+        var mode = Mode.ask
+        mode.thinks = environment["OURWHISPER_SELFTEST_THINK"] == "1"
+        // Fixed seeds make a score repeatable; greedy is the comparison the sampling is judged by.
+        let greedy = environment["OURWHISPER_SELFTEST_GREEDY"] == "1"
+        let seed = environment["OURWHISPER_SELFTEST_SEED"].flatMap(UInt32.init) ?? 1
+        let repeats = max(1, environment["OURWHISPER_SELFTEST_REPEAT"].flatMap(Int.init) ?? 1)
+        // The shipped temperature, or another to find out whether it should move: whether a lower
+        // one is steadier without turning every retry into the same text.
+        let temperature = environment["OURWHISPER_SELFTEST_TEMPERATURE"].flatMap(Float.init)
+            ?? LlamaEngine.Sampling.assistantTemperature
+
+        // The pipeline a dictation uses, so the request's cleanup and the material's cap are in what
+        // is measured and not a copy of them.
+        let pipeline = RefinementPipeline(onDevice: refiner, assistant: refiner)
+
+        var results: [[String: Any]] = []
+        for (index, testCase) in assistantCases(from: text).enumerated() {
+            for attempt in 0..<repeats {
+                let sampling: LlamaEngine.Sampling = greedy
+                    ? .greedy
+                    : .sampled(temperature: temperature, topP: 0.95, topK: 64, seed: seed &+ UInt32(index * 31 + attempt))
+                let begun = ContinuousClock.now
+                var row: [String: Any] = ["id": testCase.id, "attempt": attempt]
+                do {
+                    let answer = try await pipeline.answer(
+                        testCase.request,
+                        mode: mode,
+                        vocabulary: [],
+                        language: .auto,
+                        material: testCase.clipboard,
+                        sampling: sampling
+                    )
+                    row["answer"] = answer.text
+                    row["cut"] = answer.answerWasCut
+                    row["materialCut"] = answer.materialWasCut
+                    if let stats = answer.stats {
+                        row["promptTokens"] = stats.promptTokens
+                        row["generatedTokens"] = stats.generatedTokens
+                        row["prefill"] = stats.prefill
+                        row["tokensPerSecond"] = stats.tokensPerSecond
+                    }
+                } catch {
+                    row["failure"] = error.localizedDescription
+                }
+                row["seconds"] = seconds(ContinuousClock.now - begun)
+                results.append(row)
+                log.info("CASE \(testCase.id, privacy: .public) \(attempt) \(row["failure"] == nil ? "answered" : "no answer", privacy: .public) in \(row["seconds"] as? Double ?? 0, format: .fixed(precision: 1))s")
+            }
+        }
+
+        let report: [String: Any] = [
+            "model": refiner.model.name,
+            "loadSeconds": loadSeconds,
+            "thinks": mode.thinks,
+            "greedy": greedy,
+            "temperature": temperature,
+            "repeats": repeats,
+            "results": results,
+        ]
+        if let path = requestedOutput,
+           let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: URL(fileURLWithPath: path))
+        }
+        log.info("Assistant self-test finished; quitting")
+        refiner.shutdown()
+        NSApplication.shared.terminate(nil)
+    }
+
+    private static func seconds(_ duration: Duration) -> Double {
+        Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
     }
 
     static func run(path: String, language: SpeechLanguage, provider: any TranscriptionProvider) async {

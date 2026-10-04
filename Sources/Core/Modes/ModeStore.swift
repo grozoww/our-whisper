@@ -44,15 +44,38 @@ final class ModeStore {
     ///
     /// `DictationController` asks before reading it at all, so with every mode's toggles off the
     /// app never touches the clipboard except to paste — which is the claim the feature has to be
-    /// able to make.
+    /// able to make. Dictation modes only: an assistant mode reads it by definition, and "Ask" ships
+    /// with every copy of the app, so counting it here would put the clipboard in reach of every
+    /// dictation of everyone who never chose it. See `activeAssistant`.
     var anyModeReadsClipboard: Bool {
-        modes.contains { $0.usesClipboardContext || $0.pastesClipboard }
+        modes.contains { $0.kind == .dictation && ($0.usesClipboardContext || $0.pastesClipboard) }
+    }
+
+    /// The assistant mode the person has chosen, if the chosen mode is one — whether or not it
+    /// would be the one used right now. What `AppState` asks when a mode is chosen: choosing it is
+    /// what brings its model.
+    func activeAssistant(settings: RefinementSettings) -> Mode? {
+        guard let id = settings.activeModeID,
+              let mode = modes.first(where: { $0.id == id }),
+              mode.kind == .assistant
+        else { return nil }
+        return mode
     }
 
     /// Whether a mode could ask the model to look for a request for the clipboard — which is the
     /// only thing worth getting ready ahead of time.
     var anyModePastesClipboard: Bool {
         modes.contains(where: \.pastesClipboard)
+    }
+
+    /// The assistant mode that this dictation would use, if it would use one.
+    ///
+    /// `resolve`, so an app that claims a dictation mode wins over a chosen assistant when "Switch
+    /// by app" is on — and the clipboard is then not read for an assistant that will not run. Asked
+    /// before recording starts, to decide whether to read the clipboard at all.
+    func assistantInForce(settings: RefinementSettings, frontmostBundleID: String?) -> Mode? {
+        let mode = resolve(settings: settings, frontmostBundleID: frontmostBundleID)
+        return mode.kind == .assistant ? mode : nil
     }
 
     // MARK: - Editing
@@ -64,11 +87,12 @@ final class ModeStore {
     }
 
     @discardableResult
-    func add(name: String = "New mode") -> Mode {
+    func add(name: String = "New mode", kind: ModeKind = .dictation) -> Mode {
         let mode = Mode(
             name: name,
-            symbol: "sparkles",
-            instructions: Mode.builtIns[0].instructions
+            symbol: kind == .assistant ? "wand.and.stars" : "sparkles",
+            kind: kind,
+            instructions: kind == .assistant ? Mode.assistantInstructions : Mode.builtIns[0].instructions
         )
         modes.append(mode)
         save()

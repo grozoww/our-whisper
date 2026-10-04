@@ -150,6 +150,30 @@ struct ViewRenderingTests {
         }
     }
 
+    @Test("The assistant's editor and the Models screen build in every state its model can be in", arguments: [
+        OnDeviceRefiner.Availability.notDownloaded,
+        .downloading(0.43),
+        .downloaded,
+        .loading,
+        .available,
+        .failed("The language model could not be loaded."),
+    ])
+    func rendersAssistantScreens(availability: OnDeviceRefiner.Availability) {
+        // The editor swaps a button, a percentage and a spinner for the model's state, and Models
+        // shows the same model as a row. A `switch` in a `ViewBuilder` compiles whichever branch is
+        // wrong.
+        let temp = TemporaryDirectory()
+        let state = AppState(
+            directory: temp.url,
+            assistantModel: OnDeviceRefiner(model: .gemma4E4B, slot: .assistant, directory: temp.url, availability: availability)
+        )
+        state.settings.settings.refinement.activeModeID = Mode.ask.id
+        for section in [NavigationSection.modes, .modelsLibrary] {
+            state.selectedSection = section
+            render(RootView().environment(state))
+        }
+    }
+
     @Test("Home renders with history present")
     func rendersHomeWithData() {
         let (state, temp) = makeState()
@@ -241,6 +265,7 @@ struct ViewRenderingTests {
         PillModel.Phase.listening,
         .transcribing,
         .formatting,
+        .answering,
         .success("Slack"),
         .failure("Could not paste. The text is on your clipboard."),
     ])

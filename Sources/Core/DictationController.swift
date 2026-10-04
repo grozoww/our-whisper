@@ -18,6 +18,8 @@ final class DictationController {
         case listening
         case transcribing
         case formatting
+        /// An assistant mode is writing its answer: up to thirty seconds, stoppable with Escape.
+        case answering
         case failed(String)
     }
 
@@ -50,6 +52,9 @@ final class DictationController {
 
     private var levelTask: Task<Void, Never>?
     private var isRecording = false
+
+    /// The assistant's answer in flight, so Escape can stop it.
+    private var answerTask: Task<RefinementPipeline.AssistantResult, Error>?
 
     /// What was on the clipboard when this dictation started. Held only until the text is pasted.
     private var clipboardContext: String?
@@ -171,7 +176,7 @@ final class DictationController {
         // model has its own timeout, the cloud engine has one, the paste takes milliseconds) and
         // every failure goes through `notify`, which puts the phase back.
         switch phase {
-        case .transcribing, .formatting:
+        case .transcribing, .formatting, .answering:
             log.info("Hotkey ignored: the last dictation is still being processed")
             return
         default:
@@ -217,7 +222,25 @@ final class DictationController {
         // it for nothing. Asked of the injector rather than of the pasteboard, because a transcript
         // the last dictation deliberately left there is not something the user copied.
         let modelCanRun = refinement.modelIsEnabled(settings.settings.refinement)
-        clipboardContext = modelCanRun && modes.anyModeReadsClipboard ? injector.userClipboard() : nil
+        // An assistant mode reads the clipboard by definition — it is the material the request is
+        // about — and it is read only when this dictation would use one and its model is on this
+        // Mac. "Ask" ships to everyone, so it is not counted by `anyModeReadsClipboard`: the
+        // clipboard is touched for an assistant only by someone who has picked one, and not even
+        // then when an app's own mode would win.
+        let assistant = modes.assistantInForce(
+            settings: settings.settings.refinement,
+            frontmostBundleID: injector.targetBundleID
+        )
+        let assistantCanRun = assistant != nil && refinement.assistantMayRun
+        clipboardContext = (modelCanRun && modes.anyModeReadsClipboard) || assistantCanRun
+            ? injector.userClipboard()
+            : nil
+
+        // The assistant's model is freed when unused for a while, and reading it back takes
+        // seconds. The person is about to speak for longer than that.
+        if assistantCanRun {
+            Task { await refinement.warmUpAssistant() }
+        }
 
         // The lookup that finds where the clipboard goes has two seconds of examples to read the
         // first time, and the person is about to talk for longer than that. Only when there is a
@@ -257,6 +280,12 @@ final class DictationController {
     }
 
     func cancel() {
+        // An answer being written: stop it. The task's own error path puts the phase and the pill
+        // back, so this only asks.
+        if phase == .answering {
+            answerTask?.cancel()
+            return
+        }
         guard isRecording else { return }
         isRecording = false
         hotkeys.isRecording = false
@@ -293,6 +322,12 @@ final class DictationController {
                 settings: current.refinement,
                 frontmostBundleID: injector.targetBundleID
             )
+
+            // A different job from here on: the words are a request, not text to tidy.
+            if mode.kind == .assistant {
+                try await answerAndInject(result, mode: mode, material: clipboard, samples: samples, settings: current)
+                return
+            }
 
             // The pill only says "cleaning up" when something slow is actually happening. Rules
             // finish in microseconds, and a flash of a stage nobody waited for reads as jitter.
@@ -360,6 +395,113 @@ final class DictationController {
         } catch {
             log.error("Dictation failed: \(error.localizedDescription, privacy: .public)")
             notify(error.localizedDescription)
+        }
+    }
+
+    // MARK: - The assistant
+
+    /// What an assistant mode does with a dictation: the transcript is the request, the clipboard
+    /// is what it is about, and what is pasted is the model's answer.
+    ///
+    /// Every exit puts the phase back and takes the Escape hold off — a path that left either
+    /// would leave the hotkey ignored, which is the failure `beginRecording` warns about. The wait
+    /// is bounded by the engine's own timeout and by Escape, and the load that may come first by
+    /// the length of a model read from disk.
+    ///
+    /// Nothing is pasted when there is no answer. Cleanup has a rule-cleaned sentence to fall back
+    /// on; here the fallback would be pasting a spoken instruction, which is the wrong output and
+    /// not a worse one. The clipboard is never touched on this path except by the paste itself.
+    private func answerAndInject(
+        _ transcription: Transcription,
+        mode: Mode,
+        material: String?,
+        samples: [Float],
+        settings current: Settings
+    ) async throws {
+        phase = .answering
+        pill.setPhase(.answering)
+        hotkeys.isAnswering = true
+        defer { hotkeys.isAnswering = false }
+
+        switch refinement.assistantGate {
+        case .ready:
+            break
+        case .loadFirst:
+            // Loading is seconds and the pill already says the app is working.
+            await refinement.warmUpAssistant()
+            guard refinement.assistantGate == .ready else {
+                notify("The assistant model could not be loaded. See Models.")
+                return
+            }
+        case .blocked(let message):
+            notify(message)
+            return
+        }
+
+        let task = Task {
+            try await refinement.answer(
+                transcription.text,
+                mode: mode,
+                vocabulary: vocabulary.enabledEntries,
+                language: current.dictation.language,
+                material: material
+            )
+        }
+        answerTask = task
+        defer { answerTask = nil }
+
+        let answered: RefinementPipeline.AssistantResult
+        do {
+            answered = try await task.value
+        } catch is CancellationError {
+            log.debug("Answer cancelled")
+            phase = .idle
+            pill.hide()
+            return
+        } catch {
+            log.error("Assistant could not answer: \(error.localizedDescription, privacy: .public)")
+            notify(error.localizedDescription)
+            return
+        }
+
+        if let stats = answered.stats {
+            log.info("Answered: \(stats.promptTokens) tokens read in \(stats.prefill, format: .fixed(precision: 1))s, \(stats.generatedTokens) written at \(stats.tokensPerSecond, format: .fixed(precision: 0)) a second")
+        }
+
+        let method = try await injector.inject(
+            answered.text,
+            keepWhenNothingFocused: current.dictation.keepOnClipboardWhenNothingFocused
+        )
+        log.debug("Injected via \(method.rawValue, privacy: .public)")
+
+        // What was said and what came back. Never what was copied: History is kept for thirty days,
+        // and an assistant makes the temptation larger, because the material is the interesting
+        // half. The entry still says which mode produced it.
+        record(
+            raw: transcription.text,
+            final: answered.text,
+            mode: mode,
+            transcription: transcription,
+            usedModel: true,
+            samples: samples,
+            settings: current
+        )
+
+        phase = .idle
+        // Said in the pill because the answer reads as complete either way. A summary of the first
+        // half of a document is the failure that looks right.
+        if answered.materialWasCut {
+            pill.setPhase(.success("Read the first \(ClipboardContext.materialLimit.formatted()) characters"))
+            pill.dismiss(after: .milliseconds(2200))
+        } else if answered.answerWasCut {
+            pill.setPhase(.success("Pasted, but the answer was cut short"))
+            pill.dismiss(after: .milliseconds(2200))
+        } else if method == .clipboardOnly {
+            pill.setPhase(.success("Copied to the clipboard"))
+            pill.dismiss(after: .milliseconds(1600))
+        } else {
+            pill.setPhase(.success(injector.targetName ?? "Pasted"))
+            pill.dismiss(after: .milliseconds(700))
         }
     }
 

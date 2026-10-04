@@ -16,6 +16,7 @@ import SwiftUI
 ///     OURWHISPER_SCREENSHOT=modes OURWHISPER_SCREENSHOT_SIDEBAR=collapsed <binary>
 ///     OURWHISPER_SCREENSHOT=pill.listening <binary>
 ///     OURWHISPER_SCREENSHOT=modes.icons <binary>
+///     OURWHISPER_SCREENSHOT=modes.assistant <binary>
 ///
 /// The data in the picture is seeded below, never the user's: screenshot mode redirects
 /// `AppDirectories.support` to a throwaway directory, for the same reason the tests do.
@@ -35,9 +36,13 @@ enum ScreenshotMode {
             // window of its own, so `screencapture -l` of the main window leaves it out. Take the
             // whole display instead.
             case "modes.icons": self = .section(.modes)
+            // The Modes screen on the shipped assistant, "Ask", which is what the editor changes
+            // shape for.
+            case "modes.assistant": self = .section(.modes)
             case "pill.listening": self = .pill(.listening)
             case "pill.transcribing": self = .pill(.transcribing)
             case "pill.cleaning": self = .pill(.formatting)
+            case "pill.answering": self = .pill(.answering)
             case "pill.pasted": self = .pill(.success("Pasted into Slack"))
             default: return nil
             }
@@ -203,6 +208,12 @@ enum ScreenshotMode {
     private static func seed(_ appState: AppState) {
         appState.settings.settings.appearance.theme = requestedTheme
         requestedTheme.apply()
+
+        // Chosen, so the Modes screen opens on it. Nothing is loaded or fetched by this:
+        // `AppState.prepareAssistantIfChosen` stands down in a screenshot run.
+        if requestedRawValue == "modes.assistant" {
+            appState.settings.settings.refinement.activeModeID = Mode.ask.id
+        }
 
         appState.permissions.poseAsGranted()
         appState.dictation.poseAsArmed()

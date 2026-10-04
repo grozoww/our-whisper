@@ -17,7 +17,7 @@ struct UpdateMenuTests {
         #expect(State.idle.menuBarGlyph(updateAvailable: true) == .asset(AppState.MenuBarGlyph.frogWithUpdate))
 
         // Whatever the app is doing outranks an update that will still be there afterwards.
-        for busy in [State.listening, .transcribing, .formatting, .failed("no")] {
+        for busy in [State.listening, .transcribing, .formatting, .answering, .failed("no")] {
             #expect(busy.menuBarGlyph(updateAvailable: true) == busy.menuBarGlyph(updateAvailable: false))
         }
     }

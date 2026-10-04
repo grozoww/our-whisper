@@ -23,6 +23,15 @@ struct ModelsLibraryView: View {
                 ModelEntryRow(entry: appState.models.cleanupEntry)
             }
 
+            if let assistant = appState.models.assistantEntry {
+                SettingsSection(
+                    title: "Assistant model",
+                    subtitle: "For the modes that answer what you say instead of cleaning it up. Not needed for dictation — it is downloaded when you first choose one."
+                ) {
+                    ModelEntryRow(entry: assistant)
+                }
+            }
+
             SettingsSection(
                 title: "Where it lives",
                 subtitle: "Nothing is hidden. These are ordinary directories you can open, inspect and delete yourself."
@@ -33,7 +42,7 @@ struct ModelsLibraryView: View {
                 )
                 RowDivider()
                 PathRow(
-                    title: "Cleanup model",
+                    title: "Language models",
                     url: appState.onDeviceRefiner.fileURL.deletingLastPathComponent()
                 )
                 RowDivider()

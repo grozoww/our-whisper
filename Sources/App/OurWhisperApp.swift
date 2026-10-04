@@ -83,6 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Before `exit`, or llama.cpp's Metal backend asserts in a static destructor and every
             // quit with the cleanup model loaded ends in a crash report.
             AppStateHolder.shared?.onDeviceRefiner.shutdown()
+            AppStateHolder.shared?.assistantModel.shutdown()
         }
     }
 }

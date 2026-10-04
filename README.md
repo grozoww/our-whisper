@@ -82,6 +82,16 @@ the optional cloud provider instead.
 
   Both of these need the on-device model, and neither does anything without it — with the model
   off the app does not read your clipboard at all.
+- **Assistant mode** — talk *to* the model instead of dictating. Copy a message, hold the key and
+  say *"reply, say I'll do it Tuesday"*, or *"make this politer"*, *"summarise this in three
+  points"*, *"translate this to English"*, and the answer is typed where your cursor is. Copy
+  nothing and it writes what you ask for. It runs on a larger Gemma (4.6 GB) that is downloaded
+  when you first choose an assistant mode, loaded then, and freed after fifteen minutes unused.
+  What you copied is read only while an assistant mode is the chosen one, goes to the model on
+  your Mac and nowhere else, is never kept in History, and a password copied from a password
+  manager is skipped. Escape stops an answer being written; a model that cannot answer gives
+  you a message and pastes nothing. "Ask" is built in, and you can make your own — "you write
+  replies for a support desk, short and warm" is a whole assistant.
 - **Vocabulary** — teach it your names, jargon, and spellings. Applied as an exact rule, not a
   hint to a model, so it works every time.
 - **History** — searchable, stored locally, with a retention setting that actually deletes. Keeps
@@ -123,6 +133,8 @@ Online (optional, Soniox): 60+ including Chinese and Japanese. Requires your own
 - ~3.4 GB of disk, downloaded once on first launch: the speech model (600 MB) and the cleanup
   model (2.8 GB). Both run on your Mac. Until the cleanup model has arrived, rule-based cleanup
   is used — which is also all you get if you switch the model off.
+- Another 4.6 GB, only if you use an assistant mode: the larger model it runs on. Nothing fetches
+  it until you choose one, and Models has a button to remove it.
 
 ## Install
 
@@ -173,7 +185,8 @@ Building from source is documented in [CONTRIBUTING.md](CONTRIBUTING.md).
 - API keys you paste are stored in the **macOS Keychain**, never in a config file or a log, and
   are only ever sent to that provider.
 - The clipboard is only read to paste, unless the on-device model is on *and* a mode has "Use the
-  clipboard as context" or "Paste the clipboard where you ask for it" switched on. Then it is read at the
+  clipboard as context" or "Paste the clipboard where you ask for it" switched on, or the mode you
+  have chosen is an assistant, whose job is to work on what you copied. Then it is read at the
   moment you start speaking,
   used for that one dictation, and dropped — it is never written to history and never sent
   anywhere. A password copied from a password manager is skipped either way.
@@ -196,6 +209,18 @@ what you meant. On Russian and Ukrainian it answers in about a third of a second
 reference — useful for replying to a message whose names you would otherwise have to spell out. If it is unavailable, slow, or returns something
 implausible, the rule-cleaned text is used instead. A model problem costs you latency, never words.
 
+**An assistant mode** is a different job, with its own prompt. Cleanup is told to treat what you
+said as text to tidy and never to obey it; an assistant is told the opposite about your words and
+the same thing about what you copied, which is fenced off and read as material, never as
+instructions — a web page that says "ignore the above" is text to summarise. It runs on Gemma 4
+E4B, not the cleanup model, because that was measured: on the same thirty requests in English,
+Russian and Ukrainian, the smaller model typed the word a copied page told it to type, in
+Russian, five runs out of five, and the larger one never did, in 36 tries in two languages. The cost is speed — about 30
+tokens a second against 55 (a token is a little under a word) — which is why dictation stays on
+the small one. Its answers are checked
+only for what a wrong answer looks like whatever the task: nothing, a thought that never ended,
+your request said back, or the prompt's own sentences. `./scripts/eval-assistant.sh` scores it.
+
 ## Roadmap
 
 - [x] **P0** Project skeleton, permissions, menu bar, window shell
@@ -211,6 +236,8 @@ implausible, the rule-cleaned text is used instead. A model problem costs you la
 - [FluidAudio](https://github.com/FluidInference/FluidAudio) — CoreML runtime for Parakeet
 - [Gemma 4 E2B](https://huggingface.co/ggml-org/gemma-4-E2B-it-GGUF) — Apache-2.0, the language
   model used for cleanup
+- [Gemma 4 E4B](https://huggingface.co/ggml-org/gemma-4-E4B-it-GGUF) — Apache-2.0, the larger
+  model the assistant modes run on
 - [llama.cpp](https://github.com/ggml-org/llama.cpp) and its Swift package
   [llama.swift](https://github.com/mattt/llama.swift) — what runs it
 
