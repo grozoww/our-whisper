@@ -392,33 +392,64 @@ final class OnDeviceRefiner {
     /// sentence that only *mentions* it. Measured on 63 hand-labelled sentences and a further 35
     /// held out from tuning, 27 of 28 and 14 of 15 requests were found and none of the 55 others
     /// was. Change them with that in hand: this model moves a lot on small changes to them.
+    ///
+    /// Eight more, below the first twenty-six, are for the other languages Parakeet hears. The
+    /// lookup was never given an example in German, French, Spanish, Italian, Portuguese or
+    /// Dutch, and found the long natural phrasing in all of them anyway, but missed "paste what I
+    /// copied" said in five words — 10 of 16 on a set written for the purpose, 26 of 30 on a set
+    /// written afterwards, with nothing pasted wrongly in either.
     nonisolated static let requestExamples: [Example] = [
         ("Look at this log, paste what I copied, and tell me what is wrong.", "PASTE: paste what I copied"),
         ("Copy the link to the clipboard.", "COPY: Copy the link to the clipboard"),
         ("Вот ошибка, вставь то, что я скопировал, и скажи, что с ней.", "PASTE: вставь то, что я скопировал"),
         ("Скопируй эту ссылку в буфер обмена и отправь Ане.", "COPY: Скопируй эту ссылку в буфер обмена"),
         ("Paste the clipboard here.", "PASTE: Paste the clipboard here"),
-        ("Please paste the invoice number into the form.", "OTHER: paste the invoice number into the form"),
         ("Вставь то, что у меня в буфере.", "PASTE: Вставь то, что у меня в буфере"),
-        ("Вставь эту таблицу в презентацию, пожалуйста.", "OTHER: Вставь эту таблицу в презентацию"),
         ("Ось повідомлення, встав скопійоване й дай відповідь.", "PASTE: встав скопійоване"),
         ("Скопіюй цей текст у буфер обміну.", "COPY: Скопіюй цей текст у буфер обміну"),
         ("Here is the draft. Insert what is on my clipboard. Thanks.", "PASTE: Insert what is on my clipboard"),
         ("The sync is broken again, I will look at it tomorrow.", "NONE"),
         ("Вставь сюда, пожалуйста, то, что я скопировал.", "PASTE: Вставь сюда, пожалуйста, то, что я скопировал"),
-        ("Put the file on the shared drive.", "OTHER: Put the file on the shared drive"),
         ("Could you rewrite this, paste my clipboard, and make it shorter?", "PASTE: paste my clipboard"),
         ("Буфер обмена не очищается, надо разобраться.", "NONE"),
         ("Смотри, вставь буфер обмена, это письмо от клиента.", "PASTE: вставь буфер обмена"),
-        ("Положи файл в общую папку.", "OTHER: Положи файл в общую папку"),
-        ("Вставь новый заголовок в начало документа.", "OTHER: Вставь новый заголовок в начало документа"),
         ("Встав, будь ласка, те, що в буфері.", "PASTE: Встав, будь ласка, те, що в буфері"),
         ("Does the clipboard keep images too?", "NONE"),
-        ("Paste the chart into slide three and send me the deck.", "OTHER: Paste the chart into slide three"),
         ("Вставь содержимое буфера, пожалуйста.", "PASTE: Вставь содержимое буфера"),
         ("Я скопировал ссылку и отправлю её завтра.", "NONE"),
         ("Paste what is in the clipboard.", "PASTE: Paste what is in the clipboard"),
         ("Let us ship the new build on Friday.", "NONE"),
+        // The short, bare phrasing in the languages that had none — "Füg ein, was ich kopiert habe",
+        // "Colle ce que j'ai copié" — which was what the other languages missed: on the long natural
+        // phrasing they were already found. Measured, and not obvious, so read this before adding
+        // another (all against the 98 English/Russian/Ukrainian sentences, "false" = pasted into one
+        // that was not asking):
+        //   these six, last      40 of 43 found, 5 false of 55 — "Paste the logo into the header"
+        //                        was pasted: "Cole", "Colle" and "Plak" read as "Paste" to the model
+        //   the same, first      39 of 43, 0 false, and the other languages no better than before
+        //   six more, pairing each with "paste a thing somewhere" in its language, last
+        //                        40 of 43, 4 false
+        //   those pairs, then the English and Russian "paste a thing somewhere" examples after them
+        //                        39 of 43, 0 false
+        //   no pairs, the English and Russian ones last (below): 40 of 43, 0 false — the one that held.
+        // The two after the six are the balance: a request to copy, and a sentence that only mentions it.
+        ("Füge ein, was ich gerade kopiert habe.", "PASTE: Füge ein, was ich gerade kopiert habe"),
+        ("Colle ce que je viens de copier.", "PASTE: Colle ce que je viens de copier"),
+        ("Pega lo que tengo copiado.", "PASTE: Pega lo que tengo copiado"),
+        ("Incolla quello che ho appena copiato.", "PASTE: Incolla quello che ho appena copiato"),
+        ("Cole o que acabei de copiar.", "PASTE: Cole o que acabei de copiar"),
+        ("Plak wat ik net gekopieerd heb.", "PASTE: Plak wat ik net gekopieerd heb"),
+        ("Mets ce texte dans le presse-papiers.", "COPY: Mets ce texte dans le presse-papiers"),
+        ("Copié el enlace y lo enviaré mañana.", "NONE"),
+        // The English and Russian "paste a thing somewhere" examples, last: the model reads the
+        // nearest examples most, and these are what keep "Paste the header into the template" from
+        // being taken for a request for the clipboard.
+        ("Please paste the invoice number into the form.", "OTHER: paste the invoice number into the form"),
+        ("Вставь эту таблицу в презентацию, пожалуйста.", "OTHER: Вставь эту таблицу в презентацию"),
+        ("Put the file on the shared drive.", "OTHER: Put the file on the shared drive"),
+        ("Положи файл в общую папку.", "OTHER: Положи файл в общую папку"),
+        ("Вставь новый заголовок в начало документа.", "OTHER: Вставь новый заголовок в начало документа"),
+        ("Paste the chart into slide three and send me the deck.", "OTHER: Paste the chart into slide three"),
     ].map { Example(prompt: requestPrompt(for: $0), reply: $1) }
 
     /// What the model's answer says, if it can be trusted: `PASTE:` and then a non-empty run of
