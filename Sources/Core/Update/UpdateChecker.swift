@@ -44,19 +44,21 @@ final class UpdateChecker {
         let size: Int64
     }
 
-    /// The list of releases — deliberately *not* `/releases/latest`, and deliberately not read in
-    /// the order it arrives in; see `newestFinishedRelease`.
+    /// `/releases/latest` — the one release GitHub itself calls latest: not a draft, not a
+    /// prerelease, and the one a release run marked `make_latest`.
     ///
-    /// That endpoint only ever answers with the one release GitHub itself considers latest, and it
-    /// skips prereleases entirely. Every release used to be marked a prerelease, so it answered
-    /// 404 and this type read that as "up to date" — the check found nothing, for ever. A build
-    /// from main is a finished release now, but a rehearsal run is still a prerelease, so reading
-    /// the whole list and picking the highest finished version out of it stays the answer that
-    /// cannot go quiet on us. `scripts/install.sh` reads this same list for the same reason.
+    /// Every build that is not cut from main is a prerelease, and they pile up in the releases list.
+    /// That list is the wrong thing to search: it answers a page of 30, in an order that is not
+    /// newest-first and matches no field GitHub exposes, so enough branch builds push the newest
+    /// finished release off the page and the check says "up to date" while one is waiting — the same
+    /// silence this type already had once. Asking for the latest release has no page to fall off.
+    ///
+    /// It answers 404 when no finished release exists, which `check` reads as "up to date": true,
+    /// and the state this repository was in while every release was a prerelease.
     ///
     /// No query string, so the request stays something anyone can verify says nothing about them —
-    /// see `sendsNothingIdentifying`. GitHub's default page of 30 is far more than enough.
-    private static let endpoint = URL(string: "https://api.github.com/repos/grozoww/our-whisper/releases")!
+    /// see `sendsNothingIdentifying`.
+    private static let endpoint = URL(string: "https://api.github.com/repos/grozoww/our-whisper/releases/latest")!
 
     private let log = Logger(subsystem: "com.grozoww.ourwhisper", category: "update")
     private let http: any HTTPClient
@@ -82,7 +84,7 @@ final class UpdateChecker {
             case .github(403), .github(429):
                 "GitHub is rate-limiting update checks from this network. Try again in a few minutes."
             case .github(let status):
-                "GitHub answered \(status) when asked for the releases list. Try again later."
+                "GitHub answered \(status) when asked for the latest release. Try again later."
             }
         }
     }
@@ -123,12 +125,12 @@ final class UpdateChecker {
             }
 
             guard let json = try? JSONSerialization.jsonObject(with: data) else {
-                throw HTTPError.malformedResponse("the releases list was not JSON")
+                throw HTTPError.malformedResponse("the latest release was not JSON")
             }
 
-            // A readable list with nothing finished in it is an ordinary state — a repository
-            // whose only builds are rehearsals — and not the same thing as a response we could not
-            // read. Only the latter is worth telling the user about.
+            // A readable answer with nothing finished in it is an ordinary state — a repository
+            // whose only builds are from branches — and not the same thing as a response we could
+            // not read. Only the latter is worth telling the user about.
             guard let release = Self.newestFinishedRelease(in: json) else {
                 state = .upToDate(checkedAt: Date())
                 log.info("Update check: no finished release published yet")
@@ -214,8 +216,8 @@ final class UpdateChecker {
     /// compared as 0.0.0, and nobody was ever offered an update. Taking the first run of
     /// dot-separated digits handles both shapes and the `-<sha>` on the end at the same time.
     ///
-    /// A dot is required, so `build-7` — what a rehearsal run is tagged — does not read as version
-    /// 7 and leapfrog every real release.
+    /// A dot is required, so `build-7` — what a build from another branch is tagged — does not read
+    /// as version 7 and leapfrog every real release.
     nonisolated static func normalise(_ tag: String) -> String {
         let value = tag.trimmingCharacters(in: .whitespaces)
         guard let numbers = value.range(of: #"\d+(\.\d+)+"#, options: .regularExpression) else {

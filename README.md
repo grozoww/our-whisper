@@ -152,9 +152,9 @@ curl -fsSL https://raw.githubusercontent.com/grozoww/our-whisper/main/scripts/in
 ```
 
 That fetches the newest build, checks it with Gatekeeper and copies OurWhisper to Applications.
-[`scripts/install.sh`](scripts/install.sh) is short, so read it before you run it. Every push to
-`main` adds a release, so there is always a current build to download and older ones stay where
-they were; tags produce versioned releases.
+[`scripts/install.sh`](scripts/install.sh) is short, so read it before you run it. A release is cut
+by hand from `main`; older ones stay where they were. Builds from other branches are published as
+prereleases, which neither the installer nor the app's update check will pick.
 
 OurWhisper then asks for Microphone and Accessibility permission, and both are required: the
 microphone to hear you, Accessibility to watch for the hotkey and paste into the focused field.

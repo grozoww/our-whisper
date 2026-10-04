@@ -31,8 +31,8 @@ struct UpdateCheckerTests {
 
     @Test("A tag with no version in it never reads as newer", arguments: ["build-7", "latest", "main"])
     func tagWithoutAVersion(tag: String) {
-        // A rehearsal run is tagged `build-<run number>`. Reading that 7 as a major version would
-        // offer everyone version 7 and hand them a downgrade.
+        // A build from another branch is tagged `build-<run number>`. Reading that 7 as a major
+        // version would offer everyone version 7 and hand them a downgrade.
         #expect(!UpdateChecker.isVersion(tag, newerThan: "1.0.5"))
     }
 
@@ -100,7 +100,7 @@ struct UpdateCheckerTests {
 
     @Test("The newest finished release in the list is the one offered")
     func picksNewestFinishedRelease() throws {
-        // A rehearsal build is a prerelease and can sit anywhere in the list. Taking the first
+        // A build from a branch is a prerelease and can sit anywhere in the list. Taking the first
         // entry regardless is what would offer everyone a build nobody merged — and the finished
         // entries are out of order here so that taking the first *finished* one fails too.
         let data = releaseListJSON([
@@ -160,7 +160,7 @@ struct UpdateCheckerTests {
     @Test("A repository whose every release is a prerelease reads as up to date, not as an error")
     @MainActor
     func treatsUnfinishedReleasesAsUpToDate() async {
-        // A repository whose only builds are rehearsals. Reporting that as a failure — or as
+        // A repository whose only builds are from branches. Reporting that as a failure — or as
         // "no usable tag_name" — is what made the Check button look broken.
         let data = releaseListJSON([release(["tag_name": "release-99.0.0-abc1234", "prerelease": true])])
         let stub = StubHTTPClient(script: [("/releases", .init(status: 200, body: data))])
@@ -266,6 +266,22 @@ struct UpdateCheckerTests {
         // region. They cannot be removed, only replaced with something every user sends.
         #expect(request.value(forHTTPHeaderField: "User-Agent") == "OurWhisper")
         #expect(request.value(forHTTPHeaderField: "Accept-Language") == "en")
+    }
+
+    @Test("The check asks for the latest release, not for a page of the list")
+    @MainActor
+    func asksForTheLatestRelease() async throws {
+        // Builds from other branches are prereleases and pile up in the list. A page of 30 of those
+        // pushes the newest finished release off it, and the check then says "up to date" with an
+        // update waiting. The latest-release endpoint has no page to fall off, and skips
+        // prereleases itself. The stub matches on a substring, so only the request can say which
+        // one the code asked for.
+        let stub = StubHTTPClient(script: [("/releases", .init(status: 200, body: releaseJSON()))])
+        let checker = UpdateChecker(http: stub)
+        _ = await checker.check()
+
+        let request = try #require(stub.requests.first)
+        #expect(request.url?.path == "/repos/grozoww/our-whisper/releases/latest")
     }
 
     // MARK: - Assets
