@@ -20,8 +20,24 @@ actor ParakeetProvider: TranscriptionProvider {
 
     private var manager: AsrManager?
 
+    /// Where the files are. `nil` is FluidAudio's own folder, which is the one the Models library
+    /// shows and removes; only a test passes another, so a test never loads — or deletes — the
+    /// user's real 600 MB.
+    private let directory: URL?
+
     /// The load in flight, which every caller that arrives while it runs joins.
     private var preparation: Task<Void, Error>?
+
+    init(directory: URL? = nil) {
+        self.directory = directory
+    }
+
+    /// Whether the model's files are already on this Mac. What tells a failed *load* — worth
+    /// trying again, nothing needs the network — from a failed download, which is not retried on a
+    /// timer.
+    nonisolated var isOnDisk: Bool {
+        AsrModels.modelsExist(at: directory ?? AsrModels.defaultCacheDirectory(for: .v3))
+    }
 
     /// Cached rather than asking the manager each time: `AsrManager.isAvailable` is
     /// actor-isolated, and an async getter cannot satisfy the protocol's requirement.
@@ -46,12 +62,7 @@ actor ParakeetProvider: TranscriptionProvider {
     private func load(progress: (@Sendable (SpeechModelProgress) -> Void)?) async throws {
         log.info("Loading Parakeet TDT v3…")
         do {
-            let models = try await AsrModels.downloadAndLoad(
-                version: .v3,
-                progressHandler: { update in
-                    if let reported = Self.progress(from: update) { progress?(reported) }
-                }
-            )
+            let models = try await downloadAndLoad(progress: progress)
             let loaded = AsrManager(config: .default)
             try await loaded.loadModels(models)
 
@@ -64,7 +75,50 @@ actor ParakeetProvider: TranscriptionProvider {
         } catch let error as TranscriptionError {
             throw error
         } catch {
+            // The whole error and not its one-line description: CoreML says "Unable to load model"
+            // for a truncated file and for a Mac that was too busy to compile one, and the domain
+            // and code are what tell them apart afterwards.
+            log.error("Parakeet failed to load: \(String(describing: error), privacy: .public)")
             throw TranscriptionError.engine(error.localizedDescription)
+        }
+    }
+
+    /// Fetches what is missing and loads it — without ever letting FluidAudio delete files that are
+    /// already here.
+    ///
+    /// FluidAudio takes any failed load that is not a cancellation or a network error for a corrupt
+    /// file: it deletes the whole model folder, all four models, and downloads them again. A load
+    /// can fail for other reasons — CoreML throws the same "Unable to load model" for a truncated
+    /// file and for a Mac too busy to compile one — and then the folder is gone while, right after
+    /// login, the network may not be up either. The re-download fails, nothing is left, and the next
+    /// launch downloads 600 MB from nothing. That is the path behind "my models disappear after the
+    /// Mac restarts and download again, and opening the app a second time is fine". What the load
+    /// actually failed with was never captured, which is why `load` now logs the whole error.
+    ///
+    /// `ModelHub.offlineMode` is FluidAudio's own switch for exactly this: with it on, a failed load
+    /// is reported and nothing is deleted. It is a process-wide flag, so it is set only for the
+    /// length of this call, which `preparation` already keeps to one at a time, and cleared on every
+    /// way out — a flag left on would make every later download fail.
+    private func downloadAndLoad(progress: (@Sendable (SpeechModelProgress) -> Void)?) async throws -> AsrModels {
+        let report: ProgressHandler = { update in
+            if let reported = Self.progress(from: update) { progress?(reported) }
+        }
+        guard isOnDisk else {
+            // Nothing here to lose, and a download is what is wanted.
+            return try await AsrModels.downloadAndLoad(to: directory, version: .v3, progressHandler: report)
+        }
+
+        ModelHub.offlineMode = true
+        defer { ModelHub.offlineMode = false }
+        do {
+            return try await AsrModels.downloadAndLoad(to: directory, version: .v3, progressHandler: report)
+        } catch DownloadError.modelMissing {
+            // FluidAudio counts a file as missing — or a cache as left by an older release of its
+            // own — that `isOnDisk` did not. That is not a load that failed, it is files FluidAudio
+            // itself says are not the ones it needs, and fetching them is the right answer.
+            ModelHub.offlineMode = false
+            log.info("FluidAudio found its cache incomplete; fetching what is missing")
+            return try await AsrModels.downloadAndLoad(to: directory, version: .v3, progressHandler: report)
         }
     }
 

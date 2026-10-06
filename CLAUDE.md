@@ -782,6 +782,26 @@ the status, never from `DictationController.phase`, which went back to idle by i
 after the first refused press, with the model still compiling, so the second press recorded a
 sentence and failed with a different message.
 
+**FluidAudio deletes the speech model when a load fails, so the app does not let it.** In
+`ModelHub.loadModels`, any failed load that is not a cancellation or a network error is taken for a
+corrupt cache: the whole folder — all four models — is deleted and downloaded again. CoreML says
+"Unable to load model" for a truncated file and for a Mac too busy to compile one, so a load that fails
+right after login takes 600 MB with it, and the re-download then fails because the network is not up
+yet. Reported as "the Mac restarted for an update, the app started with it, lost its models and
+downloaded them again; closing and opening it never does". `ParakeetProvider.downloadAndLoad` turns
+`ModelHub.offlineMode` on for the length of a load whenever the files are already here, which is
+FluidAudio's own switch for "report the failure, delete nothing"; it is a process-wide flag, so it is
+cleared on every way out, and `ParakeetProviderTests` checks that. `DictationController.prepareModel`
+then tries the load again after 10 s, 30 s and 2 min — only when the files are on disk, because a load
+needs no network and a timer that downloads 600 MB on its own is not something anyone agreed to.
+
+Not measured: *what* the load failed with. It was never captured, the unified log keeps about a day,
+and the one reboot that was still in reach (6 Oct, before this change) lost nothing. `load` now logs the whole error at `.error`, which
+is persisted — read it with `log show --predicate 'subsystem == "com.grozoww.ourwhisper" AND category ==
+"parakeet"'` after the next incident. Gemma has no such path: its file is deleted only by Remove, but a
+cut download restarts from byte 0 (`CleanupModel.download` removes its partial file), which is a
+separate thing and not fixed.
+
 **The cleanup model is Gemma 4 E2B through llama.cpp, and it replaced Apple's on measurement.**
 With this app's own prompt on an M1 Max, Apple's Foundation Models refused a harmless Russian
 sentence with `guardrailViolation`, translated a Ukrainian one into English, and took 4–8 seconds
@@ -1051,7 +1071,7 @@ anything depending on `mlx-swift` 0.31.5+ needs Xcode's separately-downloaded Me
 
 ## Testing
 
-Swift Testing, not XCTest. 386 tests, no network, no API key, no microphone, no permissions.
+Swift Testing, not XCTest. 390 tests, no network, no API key, no microphone, no permissions.
 
 - Cloud providers are tested against `StubHTTPClient` with recorded response shapes.
 - Every screen is built and laid out in `ViewRenderingTests` — a view that crashes on
