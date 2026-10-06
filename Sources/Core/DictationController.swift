@@ -150,17 +150,36 @@ final class DictationController {
     /// a dictation's phase is only about the dictation. It used to carry both, and went back to
     /// idle on its own 2.5 seconds after a refused hotkey press — with the model still compiling.
     private func prepareModel() async {
-        // Nothing to download when the user runs entirely on the cloud engine, and downloading
-        // 600 MB they asked not to use would be rude.
-        guard router.plannedProviderID(for: settings.settings.dictation) == .parakeet else { return }
+        var retries = Self.loadRetryDelays[...]
 
-        do {
-            try await speechModel.prepare(using: router.parakeet)
-            log.info("Speech model ready")
-        } catch {
-            log.error("Model preparation failed: \(error.localizedDescription, privacy: .public)")
+        // Nothing to download when the user runs entirely on the cloud engine, and downloading
+        // 600 MB they asked not to use would be rude. Asked again before each retry, because the
+        // engine can be switched while this waits.
+        while router.plannedProviderID(for: settings.settings.dictation) == .parakeet {
+            do {
+                try await speechModel.prepare(using: router.parakeet)
+                log.info("Speech model ready")
+                return
+            } catch {
+                log.error("Model preparation failed: \(error.localizedDescription, privacy: .public)")
+
+                // Only a load of files that are already here is tried again on a timer. Right after
+                // login the Mac is busy and a load that fails then succeeds a minute later; nothing
+                // is fetched, so nothing leaves the Mac. A failed *download* is not retried — that
+                // is what the hotkey and the Models screen are for, and a timer that fetches 600 MB
+                // on its own is the kind of thing nobody agreed to.
+                guard router.parakeet.isOnDisk, let delay = retries.popFirst() else { return }
+                log.info("Speech model will be loaded again in \(Int(delay.components.seconds)) s")
+                try? await Task.sleep(for: delay)
+                if Task.isCancelled { return }
+            }
         }
     }
+
+    /// How long to wait before each further try at loading the speech model from disk. Three, then
+    /// stop: a model that will not load three minutes in is not a Mac that is still starting up, and
+    /// the Models screen says what is wrong.
+    nonisolated static let loadRetryDelays: [Duration] = [.seconds(10), .seconds(30), .seconds(120)]
 
     // MARK: - Recording
 
